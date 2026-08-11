@@ -175,7 +175,7 @@ const AppLayout = () => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-4 md:p-6">
+        <main id="app-main-scroll" className="flex-1 overflow-auto p-4 md:p-6">
           <Routes>
             <Route path="/" element={<MainPage />} />
             <Route path="/dashboard" element={<Dashboard />} />

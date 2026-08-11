@@ -156,6 +156,7 @@ export interface Task {
   attachments_count: number;
   content_url?: string;
   project_id: number;
+  parent_task_id?: number | null;
   created_at?: string;
   // Hydrated
   project?: Project;
@@ -170,6 +171,7 @@ export interface Task {
   anexos?: number;
   url?: string;
   projetoId?: number;
+  parentTaskId?: number | null;
   projeto?: string;
   responsavelId?: number | null;
   responsavelIds?: number[];

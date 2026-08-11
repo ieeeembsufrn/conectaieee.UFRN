@@ -1,9 +1,11 @@
 import { useAuth } from '../context/AuthContext';
+import { useData } from '../context/DataContext';
 import { Project, Task, Profile } from '../types';
 import { useGlobalAlert } from '../components/GlobalAlert';
 
 export const usePermissions = () => {
     const { profile } = useAuth();
+    const { tasks } = useData();
     const { showAlert } = useGlobalAlert();
 
     /**
@@ -79,8 +81,18 @@ export const usePermissions = () => {
             (task as any).responsavelIds?.includes(profile.id) ||
             (task as any).assignee_ids?.includes(profile.id);
 
-        // Can Edit Task: Assignee OR Manager OR Admin/Chair
-        const canEdit = isAssignee || isManager || elevated;
+        const parentTask = (task as any).parentTaskId
+            ? tasks.find((t: any) => t.id === (task as any).parentTaskId)
+            : null;
+
+        const isParentAssignee = !!parentTask && (
+            parentTask.assignees?.some(a => a.id === profile.id) ||
+            (parentTask as any).responsavelIds?.includes(profile.id) ||
+            (parentTask as any).assignee_ids?.includes(profile.id)
+        );
+
+        // Can Edit Task: Assignee OR parent task assignee OR Manager OR Admin/Chair
+        const canEdit = isAssignee || isParentAssignee || isManager || elevated;
 
         return { canEdit };
     };

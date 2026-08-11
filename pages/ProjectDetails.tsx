@@ -6,7 +6,7 @@ import {
   Edit2, Globe, Save, Plus, Trash2, Loader2, Code,
   Maximize2, Minimize2, Link as LinkIcon, Eye, EyeOff, Paperclip,
   ChevronDown, ChevronUp, MapPin, Calendar as CalendarIcon, Clock, Filter, ArrowUpDown, Archive, AlertCircle,
-  FolderKanban, Settings, Check, Activity, BarChart2
+  FolderKanban, Settings, Check, Activity, BarChart2, List, Kanban
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useData } from '../context/DataContext';
@@ -105,6 +105,11 @@ export const ProjectDetails = () => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [showArchived, setShowArchived] = useState(false);
   const [sortBy, setSortBy] = useState<SortOption>('status');
+  const [viewMode, setViewMode] = useState<'list' | 'kanban'>('list');
+
+  // Kanban Drag & Drop State
+  const [draggedTaskId, setDraggedTaskId] = useState<number | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
 
   // Status Dropdown State
   const [openStatusMenuId, setOpenStatusMenuId] = useState<number | null>(null);
@@ -175,8 +180,18 @@ export const ProjectDetails = () => {
 
   // --- Filter Logic ---
   const tarefasDoProjeto = tasks.filter((t: any) => t.projetoId === projeto.id);
+  const tarefasPrincipaisDoProjeto = tarefasDoProjeto.filter((t: any) => !t.parentTaskId);
+  const getSubtaskStats = (taskId: number) => {
+    const taskSubtasks = tarefasDoProjeto.filter((t: any) => t.parentTaskId === taskId && t.status !== 'archived');
+    if (taskSubtasks.length === 0) return null;
 
-  const tarefasFiltradas = tarefasDoProjeto.filter((t: any) => {
+    return {
+      completed: taskSubtasks.filter((t: any) => t.status === 'done').length,
+      total: taskSubtasks.length
+    };
+  };
+
+  const tarefasFiltradas = tarefasPrincipaisDoProjeto.filter((t: any) => {
     // 1. Check Archived Logic
     if (t.status === 'archived' && !showArchived) return false;
 
@@ -305,11 +320,11 @@ export const ProjectDetails = () => {
 
 
   const stats = {
-    total: tarefasDoProjeto.filter((t: any) => t.status !== 'archived').length,
-    todo: tarefasDoProjeto.filter((t: any) => t.status === 'todo').length,
-    doing: tarefasDoProjeto.filter((t: any) => t.status === 'doing').length,
-    review: tarefasDoProjeto.filter((t: any) => t.status === 'review').length,
-    done: tarefasDoProjeto.filter((t: any) => t.status === 'done').length,
+    total: tarefasPrincipaisDoProjeto.filter((t: any) => t.status !== 'archived').length,
+    todo: tarefasPrincipaisDoProjeto.filter((t: any) => t.status === 'todo').length,
+    doing: tarefasPrincipaisDoProjeto.filter((t: any) => t.status === 'doing').length,
+    review: tarefasPrincipaisDoProjeto.filter((t: any) => t.status === 'review').length,
+    done: tarefasPrincipaisDoProjeto.filter((t: any) => t.status === 'done').length,
   };
 
   const handleStatusUpdate = async (taskId: number, newStatus: string) => {
@@ -419,6 +434,89 @@ export const ProjectDetails = () => {
     return found ? found.label : status;
   };
 
+  // --- Kanban Columns Logic ---
+  // Independe do filtro de status (as colunas já segmentam por status);
+  // respeita apenas o toggle "Mostrar Arquivadas" para exibir a 5ª coluna.
+  const kanbanColumns = useMemo(() => {
+    return statusOptions
+      .filter(o => o.value !== 'archived' || showArchived)
+      .map(o => {
+        const colTasks = tarefasPrincipaisDoProjeto
+          .filter((t: any) => t.status === o.value)
+          .sort((a: any, b: any) => {
+            if (!a.prazo && !b.prazo) return 0;
+            if (!a.prazo) return 1;
+            if (!b.prazo) return -1;
+            return new Date(a.prazo + 'T12:00:00').getTime() - new Date(b.prazo + 'T12:00:00').getTime();
+          });
+        return { ...o, tasks: colTasks };
+      });
+  }, [tarefasPrincipaisDoProjeto, showArchived]);
+
+  // Extraído para variável para poder ser reposicionado acima ou abaixo
+  // dos cards de status dependendo do modo de visualização (lista/kanban).
+  const agendaSection = (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div
+        className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
+        onClick={() => setIsEventsOpen(!isEventsOpen)}
+      >
+        <div className="flex items-center gap-2">
+          <CalendarIcon className="w-5 h-5 text-orange-500" />
+          <h2 className="text-lg font-bold text-gray-900">Agenda do Projeto</h2>
+          <span className="text-xs font-medium bg-orange-50 text-orange-700 px-2 py-0.5 rounded-full">
+            {projectEvents.length} Eventos
+          </span>
+        </div>
+        <button className="text-gray-400">
+          {isEventsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+        </button>
+      </div>
+
+      {isEventsOpen && (
+        <div className="border-t border-gray-100 p-4 bg-gray-50">
+          {projectEvents.length > 0 ? (
+            <div className="space-y-3">
+              {projectEvents.map((event: any) => {
+                const date = new Date(event.startDate.length === 10 ? event.startDate + 'T12:00:00' : event.startDate);
+                const day = date.getDate();
+                const month = date.toLocaleString('default', { month: 'short' }).toUpperCase();
+
+                return (
+                  <div key={event.id} className="relative pl-6 cursor-pointer group" onClick={() => handleEventClick(event)}>
+                    <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-white border-2 border-orange-400 group-hover:scale-125 transition-transform"></div>
+                    <div className="flex gap-4 p-3 bg-white rounded-lg border border-gray-100 hover:border-blue-200 hover:shadow-sm transition-all">
+                      <div className="flex flex-col items-center justify-center bg-orange-50 rounded-lg w-12 h-12 flex-shrink-0 border border-orange-100">
+                        <span className="text-xs font-bold text-orange-400">{month}</span>
+                        <span className="text-lg font-bold text-orange-600 leading-none">{day}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-semibold text-gray-900 line-clamp-1 group-hover:text-blue-600 transition-colors">{event.title}</h4>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {event.location && (
+                            <span className="text-[10px] text-gray-400 flex items-center gap-0.5 truncate">
+                              <MapPin className="w-3 h-3" /> {event.location}
+                            </span>
+                          )}
+                        </div>
+                        <span className="inline-block mt-1.5 px-2 py-0.5 text-[10px] rounded-full font-medium bg-blue-50 text-blue-600 truncate max-w-full">
+                          {event.category || 'Geral'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-6 text-gray-500 italic text-sm">
+              Nenhum evento agendado para este projeto.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-4 md:space-y-6 pb-20">
@@ -432,7 +530,7 @@ export const ProjectDetails = () => {
         isOpen={showEditProjectModal}
         onClose={() => setShowEditProjectModal(false)}
         projectToEdit={projeto}
-        tasks={tarefasDoProjeto}
+        tasks={tarefasPrincipaisDoProjeto}
       />
 
       <EventDetailsModal
@@ -553,6 +651,9 @@ export const ProjectDetails = () => {
         </div>
       </div>
 
+      {/* No modo Kanban, a Agenda sobe para logo após o Header */}
+      {viewMode === 'kanban' && agendaSection}
+
       {/* Filtros de Status (Cards) - Hidden on Mobile */}
       <div className="hidden md:grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
         <div
@@ -601,67 +702,8 @@ export const ProjectDetails = () => {
         </div>
       </div>
 
-      {/* AGENDA DO PROJETO (Collapsible) */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div
-          className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
-          onClick={() => setIsEventsOpen(!isEventsOpen)}
-        >
-          <div className="flex items-center gap-2">
-            <CalendarIcon className="w-5 h-5 text-orange-500" />
-            <h2 className="text-lg font-bold text-gray-900">Agenda do Projeto</h2>
-            <span className="text-xs font-medium bg-orange-50 text-orange-700 px-2 py-0.5 rounded-full">
-              {projectEvents.length} Eventos
-            </span>
-          </div>
-          <button className="text-gray-400">
-            {isEventsOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-          </button>
-        </div>
-
-        {isEventsOpen && (
-          <div className="border-t border-gray-100 p-4 bg-gray-50">
-            {projectEvents.length > 0 ? (
-              <div className="space-y-3">
-                {projectEvents.map((event: any) => {
-                  const date = new Date(event.startDate.length === 10 ? event.startDate + 'T12:00:00' : event.startDate);
-                  const day = date.getDate();
-                  const month = date.toLocaleString('default', { month: 'short' }).toUpperCase();
-
-                  return (
-                    <div key={event.id} className="relative pl-6 cursor-pointer group" onClick={() => handleEventClick(event)}>
-                      <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-white border-2 border-orange-400 group-hover:scale-125 transition-transform"></div>
-                      <div className="flex gap-4 p-3 bg-white rounded-lg border border-gray-100 hover:border-blue-200 hover:shadow-sm transition-all">
-                        <div className="flex flex-col items-center justify-center bg-orange-50 rounded-lg w-12 h-12 flex-shrink-0 border border-orange-100">
-                          <span className="text-xs font-bold text-orange-400">{month}</span>
-                          <span className="text-lg font-bold text-orange-600 leading-none">{day}</span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h4 className="text-sm font-semibold text-gray-900 line-clamp-1 group-hover:text-blue-600 transition-colors">{event.title}</h4>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            {event.location && (
-                              <span className="text-[10px] text-gray-400 flex items-center gap-0.5 truncate">
-                                <MapPin className="w-3 h-3" /> {event.location}
-                              </span>
-                            )}
-                          </div>
-                          <span className="inline-block mt-1.5 px-2 py-0.5 text-[10px] rounded-full font-medium bg-blue-50 text-blue-600 truncate max-w-full">
-                            {event.category || 'Geral'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="text-center py-6 text-gray-500 italic text-sm">
-                Nenhum evento agendado para este projeto.
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      {/* No modo Lista, a Agenda mantém a posição original */}
+      {viewMode === 'list' && agendaSection}
 
       {/* Lista de Tarefas */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-visible">
@@ -671,49 +713,73 @@ export const ProjectDetails = () => {
               Tarefas do Projeto
             </h2>
             <p className="text-sm text-gray-500 mt-1">
-              {filterStatus === 'all' ? 'Todas as tarefas' : `Filtrando: ${filterStatus}`} ({tarefasFiltradas.length})
+              {viewMode === 'kanban'
+                ? `${kanbanColumns.reduce((acc, c) => acc + c.tasks.length, 0)} tarefas`
+                : `${filterStatus === 'all' ? 'Todas as tarefas' : `Filtrando: ${filterStatus}`} (${tarefasFiltradas.length})`}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Sort Select */}
-            <div className="relative flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
-                <ArrowUpDown className="w-3 h-3" /> Ordenar:
-              </span>
-              <select
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as SortOption)}
-                className="bg-transparent border-none text-sm font-medium text-gray-900 focus:ring-0 cursor-pointer outline-none pl-1 pr-6"
-                style={{ backgroundImage: 'none' }}
+            {/* View Mode Toggle: List / Kanban */}
+            <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-200">
+              <button
+                onClick={() => setViewMode('list')}
+                className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+                title="Visualização em Lista"
               >
-                <option value="status">Status</option>
-                <option value="priority">Prioridade</option>
-                <option value="deadline">Data de Entrega</option>
-                <option value="startDate">Data de Início</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-500 absolute right-3 pointer-events-none" />
+                <List className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setViewMode('kanban')}
+                className={`p-1.5 rounded-md transition-colors ${viewMode === 'kanban' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+                title="Visualização em Kanban"
+              >
+                <Kanban className="w-4 h-4" />
+              </button>
             </div>
 
-            {/* Mobile Status Filter */}
-            <div className="md:hidden relative flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
-                <Activity className="w-3 h-3" /> Status:
-              </span>
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className="bg-transparent border-none text-sm font-medium text-gray-900 focus:ring-0 cursor-pointer outline-none pl-1 pr-6"
-                style={{ backgroundImage: 'none' }}
-              >
-                <option value="all">Todos</option>
-                <option value="todo">A Fazer</option>
-                <option value="doing">Fazendo</option>
-                <option value="review">Revisão</option>
-                <option value="done">Concluído</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-500 absolute right-3 pointer-events-none" />
-            </div>
+            {viewMode === 'list' && (
+              <>
+                {/* Sort Select */}
+                <div className="relative flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                    <ArrowUpDown className="w-3 h-3" /> Ordenar:
+                  </span>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as SortOption)}
+                    className="bg-transparent border-none text-sm font-medium text-gray-900 focus:ring-0 cursor-pointer outline-none pl-1 pr-6"
+                    style={{ backgroundImage: 'none' }}
+                  >
+                    <option value="status">Status</option>
+                    <option value="priority">Prioridade</option>
+                    <option value="deadline">Data de Entrega</option>
+                    <option value="startDate">Data de Início</option>
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-gray-500 absolute right-3 pointer-events-none" />
+                </div>
+
+                {/* Mobile Status Filter */}
+                <div className="md:hidden relative flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                    <Activity className="w-3 h-3" /> Status:
+                  </span>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="bg-transparent border-none text-sm font-medium text-gray-900 focus:ring-0 cursor-pointer outline-none pl-1 pr-6"
+                    style={{ backgroundImage: 'none' }}
+                  >
+                    <option value="all">Todos</option>
+                    <option value="todo">A Fazer</option>
+                    <option value="doing">Fazendo</option>
+                    <option value="review">Revisão</option>
+                    <option value="done">Concluído</option>
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-gray-500 absolute right-3 pointer-events-none" />
+                </div>
+              </>
+            )}
 
             {/* Toggle Show Archived */}
             <button
@@ -724,7 +790,7 @@ export const ProjectDetails = () => {
               <span className="hidden sm:inline">{showArchived ? 'Ocultar Arquivadas' : 'Mostrar Arquivadas'}</span>
             </button>
 
-            {filterStatus !== 'all' && (
+            {viewMode === 'list' && filterStatus !== 'all' && (
               <button
                 onClick={() => setFilterStatus('all')}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 text-sm font-medium hover:bg-blue-100 transition-colors"
@@ -736,6 +802,137 @@ export const ProjectDetails = () => {
           </div>
         </div>
 
+        {viewMode === 'kanban' ? (
+        <div className="p-4 md:p-6 overflow-x-auto">
+          <div className="flex gap-4 min-w-max items-start">
+            {kanbanColumns.map((col) => (
+              <div
+                key={col.value}
+                onDragOver={(e) => {
+                  if (draggedTaskId == null) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverColumn !== col.value) setDragOverColumn(col.value);
+                }}
+                onDragLeave={(e) => {
+                  // Ignore leave events that bubble from a child element into another child
+                  if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                  setDragOverColumn((prev) => (prev === col.value ? null : prev));
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverColumn(null);
+                  const taskId = draggedTaskId;
+                  setDraggedTaskId(null);
+                  if (taskId == null) return;
+                  const draggedTask = tasks.find((t: any) => t.id === taskId);
+                  if (draggedTask && draggedTask.status !== col.value) {
+                    handleStatusUpdate(taskId, col.value);
+                  }
+                }}
+                className={`w-72 flex-shrink-0 bg-gray-50 rounded-xl border-2 flex flex-col max-h-[70vh] transition-colors ${dragOverColumn === col.value ? 'border-blue-400 bg-blue-50/50' : 'border-transparent'}`}
+              >
+                <div className="p-3 border-b border-gray-100 flex items-center justify-between">
+                  <span className={`text-xs font-bold uppercase tracking-wide px-2 py-1 rounded-full border ${col.color}`}>
+                    {col.label}
+                  </span>
+                  <span className="text-xs font-bold text-gray-400 bg-white px-2 py-0.5 rounded-full border border-gray-200">
+                    {col.tasks.length}
+                  </span>
+                </div>
+
+                <div className="p-3 space-y-3 overflow-y-auto">
+                  {col.tasks.length === 0 ? (
+                    <p className="text-xs text-gray-400 italic text-center py-6 pointer-events-none">
+                      {dragOverColumn === col.value ? 'Solte aqui' : 'Nenhuma tarefa'}
+                    </p>
+                  ) : (
+	                    col.tasks.map((tarefa: any) => {
+	                      const assignedUsers = users.filter((u: any) => tarefa.responsavelIds?.includes(u.id));
+	                      const isArchived = tarefa.status === 'archived';
+	                      const isDragging = draggedTaskId === tarefa.id;
+	                      const isUpdatingThis = isUpdatingStatus === tarefa.id;
+	                      const subtaskStats = getSubtaskStats(tarefa.id);
+
+	                      return (
+                        <div
+                          key={tarefa.id}
+                          draggable={!isUpdatingStatus}
+                          onDragStart={(e) => {
+                            setDraggedTaskId(tarefa.id);
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('text/plain', String(tarefa.id));
+                          }}
+                          onDragEnd={() => {
+                            setDraggedTaskId(null);
+                            setDragOverColumn(null);
+                          }}
+                          onClick={() => navigate(getTaskUrl(tarefa))}
+                          className={`relative bg-white rounded-lg border border-gray-200 p-3 cursor-grab active:cursor-grabbing hover:shadow-md hover:border-blue-200 transition-all ${isArchived ? 'opacity-75 grayscale-[0.5]' : ''} ${isDragging ? 'opacity-40' : ''} ${isUpdatingThis ? 'opacity-70 pointer-events-none' : ''}`}
+                        >
+                          {isUpdatingThis && (
+                            <div className="absolute inset-0 bg-white/60 rounded-lg flex items-center justify-center z-10">
+                              <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                            </div>
+                          )}
+                          <h4 className={`text-sm font-semibold mb-2 line-clamp-2 ${isArchived ? 'text-gray-500 line-through' : 'text-gray-900'}`}>
+                            {tarefa.titulo}
+                          </h4>
+
+                          {tarefa.tags && tarefa.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mb-2">
+                              {tarefa.tags.map((tag: string) => (
+                                <span key={tag} className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px]">
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between mt-2">
+                            <PriorityBadge prioridade={tarefa.prioridade} />
+
+                            {assignedUsers.length > 0 ? (
+                              <div className="flex -space-x-2">
+                                {assignedUsers.slice(0, 3).map((u: any) => (
+                                  <UserAvatar key={u.id} user={u} size="sm" className="ring-2 ring-white" />
+                                ))}
+                                {assignedUsers.length > 3 && (
+                                  <div className="flex items-center justify-center h-6 w-6 rounded-full ring-2 ring-white bg-gray-100 text-[10px] font-bold text-gray-500">
+                                    +{assignedUsers.length - 3}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <User className="w-3.5 h-3.5 text-gray-300" />
+                            )}
+                          </div>
+
+	                          {(tarefa.prazo || subtaskStats) && (
+	                            <div className="flex flex-wrap items-center gap-2 mt-2 text-[11px] text-gray-500">
+	                              {tarefa.prazo && (
+	                                <span className="flex items-center gap-1">
+	                                  <Calendar className="w-3 h-3" />
+	                                  {new Date(tarefa.prazo + 'T12:00:00').toLocaleDateString('pt-BR')}
+	                                </span>
+	                              )}
+	                              {subtaskStats && (
+	                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-100 font-bold" title="Subtarefas concluídas">
+	                                  ✅ {subtaskStats.completed}/{subtaskStats.total}
+	                                </span>
+	                              )}
+	                            </div>
+	                          )}
+	                        </div>
+	                      );
+                    })
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        ) : (
         <div className="divide-y divide-gray-100">
           {groupedTasks.length === 0 ? (
             <div className="p-12 text-center">
@@ -763,13 +960,14 @@ export const ProjectDetails = () => {
 
                 {/* Tasks in Group */}
                 <div className="divide-y divide-gray-100">
-                  {group.tasks.map((tarefa: any) => {
-                    const assignedUsers = users.filter((u: any) =>
-                      tarefa.responsavelIds?.includes(u.id)
-                    );
-                    const isArchived = tarefa.status === 'archived';
+	                  {group.tasks.map((tarefa: any) => {
+	                    const assignedUsers = users.filter((u: any) =>
+	                      tarefa.responsavelIds?.includes(u.id)
+	                    );
+	                    const isArchived = tarefa.status === 'archived';
+	                    const subtaskStats = getSubtaskStats(tarefa.id);
 
-                    return (
+	                    return (
                       <div
                         key={tarefa.id}
                         className={`p-4 md:p-6 transition-colors group cursor-pointer relative ${isArchived ? 'bg-slate-50 opacity-75 grayscale-[0.5] hover:opacity-100' : 'hover:bg-gray-50'}`}
@@ -825,12 +1023,18 @@ export const ProjectDetails = () => {
 
                               <div className="h-4 w-px bg-gray-200 hidden sm:block"></div>
 
-                              <span className="flex items-center gap-1">
-                                <Calendar className="w-3.5 h-3.5" />
-                                {tarefa.prazo ? new Date(tarefa.prazo + 'T12:00:00').toLocaleDateString('pt-BR') : '-'}
-                              </span>
+	                              <span className="flex items-center gap-1">
+	                                <Calendar className="w-3.5 h-3.5" />
+	                                {tarefa.prazo ? new Date(tarefa.prazo + 'T12:00:00').toLocaleDateString('pt-BR') : '-'}
+	                              </span>
 
-                              <div className="flex items-center gap-3 ml-auto mr-4">
+	                              {subtaskStats && (
+	                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-green-50 text-green-700 border border-green-100 font-bold" title="Subtarefas concluídas">
+	                                  ✅ {subtaskStats.completed}/{subtaskStats.total}
+	                                </span>
+	                              )}
+
+	                              <div className="flex items-center gap-3 ml-auto mr-4">
                                 {tarefa.anexos > 0 && (
                                   <span className="flex items-center gap-1">
                                     <Paperclip className="w-3.5 h-3.5" />
@@ -894,6 +1098,7 @@ export const ProjectDetails = () => {
             ))
           )}
         </div>
+        )}
       </div>
 
       {/* Gantt Chart Section (Collapsible) */}

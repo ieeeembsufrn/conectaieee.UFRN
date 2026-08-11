@@ -124,9 +124,12 @@ create table public.tasks (
   attachments_count int default 0,
   content_url text, -- URL para iframe (Figma, Docs, etc)
   project_id bigint references public.projects(id) on delete cascade,
+  parent_task_id bigint references public.tasks(id) on delete cascade,
   -- REMOVIDO: assignee_ids (Normalizado em task_assignees)
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
+
+create index idx_tasks_parent_task_id on public.tasks(parent_task_id);
 
 -- 9. Tabela de Responsáveis pela Tarefa [NOVA]
 create table public.task_assignees (

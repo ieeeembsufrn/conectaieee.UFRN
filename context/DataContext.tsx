@@ -234,6 +234,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           attachments_count: t.attachments_count,
           content_url: t.content_url,
           project_id: t.project_id,
+          parent_task_id: t.parent_task_id,
           created_at: t.created_at,
 
           // Hydrated
@@ -249,6 +250,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           anexos: t.attachments_count,
           url: t.content_url,
           projetoId: t.project_id,
+          parentTaskId: t.parent_task_id,
           projeto: proj ? proj.name : 'Desconhecido',
           responsavelId: firstAssignee ? firstAssignee.id : null,
           responsavelIds: assignees.map(a => a.id),

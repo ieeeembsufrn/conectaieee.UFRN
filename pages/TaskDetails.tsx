@@ -4,15 +4,18 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Calendar, Briefcase, User, Tag, ExternalLink,
   Edit2, Globe, Save, Plus, Trash2, Loader2, Code,
-  Maximize2, Minimize2, Link as LinkIcon, Eye, EyeOff, Paperclip
+  Maximize2, Minimize2, Link as LinkIcon, Eye, EyeOff, Paperclip,
+  CheckCircle2, Circle, CircleDot, Check, X
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useData } from '../context/DataContext';
-import { PriorityBadge, StatusBadge, UserAvatar } from '../lib/utils';
+import { PriorityBadge, StatusBadge, UserAvatar, getLocalDateISOString, getTaskUrl } from '../lib/utils';
 import { NewTaskModal } from '../components/NewTaskModal';
+import { ConfirmationModal } from '../components/ConfirmationModal';
 import { supabase } from '../lib/supabase';
 import { usePermissions } from '../hooks/usePermissions';
 import { useGlobalAlert } from '../components/GlobalAlert';
+import { nanoid } from 'nanoid';
 
 // --- Types (Single Source of Truth Structure) ---
 type ResourceType = 'url' | 'html';
@@ -73,7 +76,7 @@ export const TaskDetails = () => {
   const { taskId } = useParams();
   const navigate = useNavigate();
   const { tasks, fetchData, users, projects } = useData();
-  const { withTaskEditPermission } = usePermissions();
+  const { checkProjectPermissions, checkTaskPermissions, withTaskEditPermission } = usePermissions();
   const { showAlert } = useGlobalAlert();
 
   // UI States
@@ -81,6 +84,14 @@ export const TaskDetails = () => {
   const [isEditingDesc, setIsEditingDesc] = useState(false);
   const [isSavingDesc, setIsSavingDesc] = useState(false);
   const [isAddingResource, setIsAddingResource] = useState(false);
+  const [isAddingSubtask, setIsAddingSubtask] = useState(false);
+  const [isSavingSubtask, setIsSavingSubtask] = useState(false);
+  const [isUpdatingSubtaskId, setIsUpdatingSubtaskId] = useState<number | null>(null);
+  const [subtaskToEdit, setSubtaskToEdit] = useState<any | null>(null);
+  const [subtaskToDelete, setSubtaskToDelete] = useState<any | null>(null);
+  const [isDeletingSubtask, setIsDeletingSubtask] = useState(false);
+  const [showSubtaskAssigneeDropdown, setShowSubtaskAssigneeDropdown] = useState(false);
+  const [showEditSubtaskAssigneeDropdown, setShowEditSubtaskAssigneeDropdown] = useState(false);
   const [showDescPreview, setShowDescPreview] = useState(false);
 
   // Data States
@@ -90,12 +101,69 @@ export const TaskDetails = () => {
   // Form States
   const [newResValue, setNewResValue] = useState('');
   const [newResDisplay, setNewResDisplay] = useState<DisplayMode>('iframe-100');
+  const [newSubtask, setNewSubtask] = useState({
+    title: '',
+    description: '',
+    assigneeId: '',
+    assigneeSearch: '',
+    deadline: ''
+  });
+  const [editSubtaskForm, setEditSubtaskForm] = useState({
+    title: '',
+    description: '',
+    assigneeId: '',
+    assigneeSearch: '',
+    deadline: ''
+  });
 
+  const normalizedTaskId = taskId?.replace(/\.$/, '');
   const task = tasks.find((t: any) =>
-    t.public_id === taskId // Strict Public ID Check
+    t.public_id === taskId || t.public_id === normalizedTaskId
   );
 
   const project = projects.find((p: any) => p.id === task?.projetoId || p.id === task?.project_id);
+  const parentTask = task?.parentTaskId ? tasks.find((t: any) => t.id === task.parentTaskId) : null;
+  const isSubtask = !!parentTask;
+  const subtasks = tasks
+    .filter((t: any) => t.parentTaskId === task?.id)
+    .sort((a: any, b: any) => {
+      const statusOrder: Record<string, number> = { doing: 0, todo: 1, review: 2, done: 3, archived: 4 };
+      const statusDiff = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+      if (statusDiff !== 0) return statusDiff;
+      if (!a.prazo && !b.prazo) return 0;
+      if (!a.prazo) return 1;
+      if (!b.prazo) return -1;
+      return new Date(a.prazo + 'T12:00:00').getTime() - new Date(b.prazo + 'T12:00:00').getTime();
+    });
+  const completedSubtasks = subtasks.filter((t: any) => t.status === 'done').length;
+  const subtaskProgress = subtasks.length > 0 ? Math.round((completedSubtasks / subtasks.length) * 100) : 0;
+  const parentAssigneeIds = task?.responsavelIds || [];
+  const selectedSubtaskAssignee = users.find((u: any) => String(u.id) === newSubtask.assigneeId);
+  const filteredSubtaskAssignees = users
+    .filter((user: any) => {
+      const query = newSubtask.assigneeSearch.trim().toLowerCase();
+      if (!query) return parentAssigneeIds.includes(user.id);
+      return user.nome?.toLowerCase().includes(query) || user.email?.toLowerCase().includes(query);
+    })
+    .sort((a: any, b: any) => {
+      const aInParent = parentAssigneeIds.includes(a.id);
+      const bInParent = parentAssigneeIds.includes(b.id);
+      if (aInParent === bInParent) return (a.nome || '').localeCompare(b.nome || '');
+      return aInParent ? -1 : 1;
+    });
+  const selectedEditSubtaskAssignee = users.find((u: any) => String(u.id) === editSubtaskForm.assigneeId);
+  const filteredEditSubtaskAssignees = users
+    .filter((user: any) => {
+      const query = editSubtaskForm.assigneeSearch.trim().toLowerCase();
+      if (!query) return parentAssigneeIds.includes(user.id);
+      return user.nome?.toLowerCase().includes(query) || user.email?.toLowerCase().includes(query);
+    })
+    .sort((a: any, b: any) => {
+      const aInParent = parentAssigneeIds.includes(a.id);
+      const bInParent = parentAssigneeIds.includes(b.id);
+      if (aInParent === bInParent) return (a.nome || '').localeCompare(b.nome || '');
+      return aInParent ? -1 : 1;
+    });
 
   // --- Effect: Load from Source of Truth ---
   useEffect(() => {
@@ -104,6 +172,38 @@ export const TaskDetails = () => {
       setResources(parseTaskResources(task));
     }
   }, [task]);
+
+  useEffect(() => {
+    if (!task?.id) return;
+
+    const scrollToTop = () => {
+      const appScroller = document.getElementById('app-main-scroll');
+      appScroller?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    };
+
+    scrollToTop();
+    const frame = window.requestAnimationFrame(() => {
+      scrollToTop();
+      window.requestAnimationFrame(scrollToTop);
+    });
+    const timeout = window.setTimeout(scrollToTop, 120);
+
+    setIsAddingSubtask(false);
+    setSubtaskToEdit(null);
+    setSubtaskToDelete(null);
+    setShowSubtaskAssigneeDropdown(false);
+    setShowEditSubtaskAssigneeDropdown(false);
+    setNewSubtask({ title: '', description: '', assigneeId: '', assigneeSearch: '', deadline: '' });
+    setEditSubtaskForm({ title: '', description: '', assigneeId: '', assigneeSearch: '', deadline: '' });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+    };
+  }, [task?.id]);
 
   if (!task) {
     return (
@@ -196,6 +296,210 @@ export const TaskDetails = () => {
     });
   };
 
+  const canEditCurrentTask = () => !!task && !!project && checkTaskPermissions(task, project).canEdit;
+  const canDeleteSubtasks = () => !!project && checkProjectPermissions(project).canEdit;
+
+  const runSubtaskAction = (subtask: any, action: () => void) => {
+    if (!task || !project) return;
+
+    const canEditSubtask = checkTaskPermissions(subtask, project).canEdit;
+    if (canEditCurrentTask() || canEditSubtask) {
+      action();
+      return;
+    }
+
+    showAlert("Acesso Negado", "Apenas responsáveis pela tarefa ou gerentes podem editar subtarefas.", "warning");
+  };
+
+  const handleCreateSubtask = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!task || !project || !newSubtask.title.trim()) return;
+
+    if (!canEditCurrentTask()) {
+      showAlert("Acesso Negado", "Apenas responsáveis pela tarefa ou gerentes podem criar subtarefas.", "warning");
+      return;
+    }
+
+    setIsSavingSubtask(true);
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .insert([{
+          public_id: nanoid(5),
+          title: newSubtask.title.trim(),
+          description: newSubtask.description.trim() || null,
+          status: 'todo',
+          priority: task.priority || task.prioridade || 'média',
+          start_date: getLocalDateISOString(),
+          deadline: newSubtask.deadline || null,
+          tags: [],
+          attachments_count: 0,
+          content_url: null,
+          project_id: task.project_id || task.projetoId,
+          parent_task_id: task.id
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      if (newSubtask.assigneeId) {
+        const { error: assignErr } = await supabase
+          .from('task_assignees')
+          .insert([{
+            task_id: data.id,
+            profile_id: Number(newSubtask.assigneeId)
+          }]);
+
+        if (assignErr) throw assignErr;
+      }
+
+      setNewSubtask({ title: '', description: '', assigneeId: '', assigneeSearch: '', deadline: '' });
+      setShowSubtaskAssigneeDropdown(false);
+      setIsAddingSubtask(false);
+      await fetchData(true);
+    } catch (error: any) {
+      console.error("Erro ao criar subtarefa:", error);
+      showAlert("Erro ao Criar", error.message || "Não foi possível criar a subtarefa.", "error");
+    } finally {
+      setIsSavingSubtask(false);
+    }
+  };
+
+  const startEditingSubtask = (subtask: any) => {
+    const currentAssigneeId = subtask.responsavelIds?.[0] ? String(subtask.responsavelIds[0]) : '';
+    setSubtaskToEdit(subtask);
+    setEditSubtaskForm({
+      title: subtask.titulo || '',
+      description: subtask.descricao || '',
+      assigneeId: currentAssigneeId,
+      assigneeSearch: '',
+      deadline: subtask.prazo || ''
+    });
+    setShowEditSubtaskAssigneeDropdown(false);
+  };
+
+  const cancelEditingSubtask = () => {
+    setSubtaskToEdit(null);
+    setEditSubtaskForm({ title: '', description: '', assigneeId: '', assigneeSearch: '', deadline: '' });
+    setShowEditSubtaskAssigneeDropdown(false);
+  };
+
+  const handleUpdateSubtask = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!subtaskToEdit || !project || !editSubtaskForm.title.trim()) return;
+
+    runSubtaskAction(subtaskToEdit, async () => {
+      setIsSavingSubtask(true);
+      try {
+        const { error } = await supabase
+          .from('tasks')
+          .update({
+            title: editSubtaskForm.title.trim(),
+            description: editSubtaskForm.description.trim() || null,
+            deadline: editSubtaskForm.deadline || null
+          })
+          .eq('id', subtaskToEdit.id);
+
+        if (error) throw error;
+
+        await supabase.from('task_assignees').delete().eq('task_id', subtaskToEdit.id);
+
+        if (editSubtaskForm.assigneeId) {
+          const { error: assignErr } = await supabase
+            .from('task_assignees')
+            .insert([{
+              task_id: subtaskToEdit.id,
+              profile_id: Number(editSubtaskForm.assigneeId)
+            }]);
+
+          if (assignErr) throw assignErr;
+        }
+
+        cancelEditingSubtask();
+        await fetchData(true);
+      } catch (error: any) {
+        console.error("Erro ao editar subtarefa:", error);
+        showAlert("Erro ao Salvar", error.message || "Não foi possível editar a subtarefa.", "error");
+      } finally {
+        setIsSavingSubtask(false);
+      }
+    });
+  };
+
+  const handleDeleteSubtask = async () => {
+    if (!subtaskToDelete || !project) return;
+
+    if (!canDeleteSubtasks()) {
+      showAlert("Acesso Negado", "Apenas gerentes do projeto podem apagar subtarefas.", "warning");
+      return;
+    }
+
+    setIsDeletingSubtask(true);
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', subtaskToDelete.id);
+
+      if (error) throw error;
+
+      if (subtaskToEdit?.id === subtaskToDelete.id) {
+        cancelEditingSubtask();
+      }
+
+      setSubtaskToDelete(null);
+      await fetchData(true);
+    } catch (error: any) {
+      console.error("Erro ao apagar subtarefa:", error);
+      showAlert("Erro ao Apagar", error.message || "Não foi possível apagar a subtarefa.", "error");
+    } finally {
+      setIsDeletingSubtask(false);
+    }
+  };
+
+  const getNextSubtaskStatus = (status: string) => {
+    if (status === 'todo') return 'doing';
+    if (status === 'doing') return 'done';
+    return 'todo';
+  };
+
+  const handleCycleSubtaskStatus = async (subtask: any) => {
+    if (!project) return;
+
+    runSubtaskAction(subtask, async () => {
+      const nextStatus = getNextSubtaskStatus(subtask.status);
+      setIsUpdatingSubtaskId(subtask.id);
+      try {
+        const { error } = await supabase
+          .from('tasks')
+          .update({ status: nextStatus })
+          .eq('id', subtask.id);
+
+        if (error) throw error;
+
+        await fetchData(true);
+      } catch (error: any) {
+        console.error("Erro ao atualizar subtarefa:", error);
+        showAlert("Erro ao Atualizar", error.message || "Não foi possível atualizar a subtarefa.", "error");
+      } finally {
+        setIsUpdatingSubtaskId(null);
+      }
+    });
+  };
+
+  const renderSubtaskStatusIcon = (status: string) => {
+    if (status === 'done') return <CheckCircle2 className="w-5 h-5 text-green-600" />;
+    if (status === 'doing') return <CircleDot className="w-5 h-5 text-yellow-500" />;
+    return <Circle className="w-5 h-5 text-gray-300" />;
+  };
+
+  const getSubtaskStatusLabel = (status: string) => {
+    if (status === 'done') return 'Concluída';
+    if (status === 'doing') return 'Fazendo';
+    return 'A fazer';
+  };
+
   // --- Renders ---
 
   const renderResourceCard = (res: ResourceItem, index: number) => {
@@ -277,6 +581,18 @@ export const TaskDetails = () => {
         onClose={() => setIsEditModalOpen(false)}
         taskToEdit={task}
       />
+      <ConfirmationModal
+        isOpen={!!subtaskToDelete}
+        onClose={() => {
+          if (!isDeletingSubtask) setSubtaskToDelete(null);
+        }}
+        onConfirm={handleDeleteSubtask}
+        title="Apagar Subtarefa"
+        message={`Tem certeza que deseja apagar "${subtaskToDelete?.titulo || 'esta subtarefa'}"? Esta ação não pode ser desfeita.`}
+        type="danger"
+        confirmLabel={isDeletingSubtask ? 'Apagando...' : 'Sim, apagar'}
+        cancelLabel="Cancelar"
+      />
 
       {/* Header Navigation */}
       <button
@@ -296,6 +612,17 @@ export const TaskDetails = () => {
                 <StatusBadge status={task.status} />
                 <PriorityBadge prioridade={task.prioridade} />
               </div>
+
+              {parentTask && (
+                <button
+                  type="button"
+                  onClick={() => navigate(getTaskUrl(parentTask))}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-sm font-medium transition-colors"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  Subtarefa de: {parentTask.titulo}
+                </button>
+              )}
 
               <h1 className="text-2xl md:text-3xl font-bold text-gray-900 leading-tight">
                 {task.titulo}
@@ -446,6 +773,501 @@ export const TaskDetails = () => {
           )}
         </div>
       </div>
+
+      {!isSubtask && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-visible relative">
+          <div className="p-5 md:p-6 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-600" />
+                Subtarefas
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">
+                {subtasks.length === 0
+                  ? 'Nenhuma subtarefa criada'
+                  : `${completedSubtasks}/${subtasks.length} concluídas`}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {subtasks.length > 0 && (
+                <div className="hidden sm:flex items-center gap-2 min-w-[150px]">
+                  <div className="h-2 flex-1 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-500 rounded-full transition-all"
+                      style={{ width: `${subtaskProgress}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-bold text-gray-500">{subtaskProgress}%</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!canEditCurrentTask()) {
+                    showAlert("Acesso Negado", "Apenas responsáveis pela tarefa ou gerentes podem criar subtarefas.", "warning");
+                    return;
+                  }
+                  setIsAddingSubtask(true);
+                }}
+                className="flex items-center gap-2 px-3 py-2 bg-gray-900 hover:bg-black text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Subtarefa
+              </button>
+            </div>
+          </div>
+
+          {isAddingSubtask && (
+            <form onSubmit={handleCreateSubtask} className="p-5 md:p-6 bg-gray-50 border-b border-gray-100 space-y-4 relative z-20">
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-3">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">
+                    Título
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newSubtask.title}
+                    onChange={(e) => setNewSubtask(prev => ({ ...prev, title: e.target.value }))}
+                    className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm"
+                    placeholder="Título da subtarefa"
+                    autoFocus
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">
+                    Data de Entrega
+                  </label>
+                  <input
+                    type="date"
+                    value={newSubtask.deadline}
+                    onChange={(e) => setNewSubtask(prev => ({ ...prev, deadline: e.target.value }))}
+                    className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm text-gray-600"
+                  />
+                </div>
+              </div>
+
+              <textarea
+                value={newSubtask.description}
+                onChange={(e) => setNewSubtask(prev => ({ ...prev, description: e.target.value }))}
+                rows={3}
+                className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm resize-none"
+                placeholder="Descrição curta da subtarefa"
+              />
+
+              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                <div className="flex-1 space-y-2 relative">
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">
+                    Responsável
+                  </label>
+
+                  <div className="min-h-[46px] w-full px-2 py-2 bg-white border border-gray-200 rounded-xl focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-500 transition-all flex flex-wrap gap-2 items-center">
+                    {selectedSubtaskAssignee && (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-100 text-blue-700 rounded-lg text-sm font-medium shadow-sm">
+                        <UserAvatar user={selectedSubtaskAssignee} size="xs" showRing={false} />
+                        {selectedSubtaskAssignee.nome.split(' ')[0]}
+                        <button
+                          type="button"
+                          onClick={() => setNewSubtask(prev => ({ ...prev, assigneeId: '', assigneeSearch: '' }))}
+                          className="hover:bg-blue-100 rounded-full p-0.5 transition-colors"
+                          title="Remover responsável"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+
+                    <div className="flex-1 relative min-w-[150px]">
+                      <input
+                        type="text"
+                        value={newSubtask.assigneeSearch}
+                        onChange={(e) => {
+                          setNewSubtask(prev => ({ ...prev, assigneeSearch: e.target.value }));
+                          setShowSubtaskAssigneeDropdown(true);
+                        }}
+                        onFocus={() => setShowSubtaskAssigneeDropdown(true)}
+                        className="w-full bg-transparent border-none outline-none text-sm px-2 py-1 placeholder-gray-400"
+                        placeholder={selectedSubtaskAssignee ? "Trocar responsável..." : "Pesquisar responsável..."}
+                      />
+                    </div>
+                  </div>
+
+                  {showSubtaskAssigneeDropdown && (
+                    <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-100 max-h-64 overflow-y-auto z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                      {!newSubtask.assigneeSearch.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewSubtask(prev => ({ ...prev, assigneeId: '', assigneeSearch: '' }));
+                            setShowSubtaskAssigneeDropdown(false);
+                          }}
+                          className={`w-full px-4 py-2.5 flex items-center justify-between hover:bg-gray-50 transition-colors text-left ${!newSubtask.assigneeId ? 'bg-blue-50/50' : ''}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+                              <User className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">Sem responsável</p>
+                              <p className="text-xs text-gray-500">Criar subtarefa sem atribuição</p>
+                            </div>
+                          </div>
+                          {!newSubtask.assigneeId && <Check className="w-4 h-4 text-blue-600" />}
+                        </button>
+                      )}
+
+                      {filteredSubtaskAssignees.length > 0 ? (
+                        <div className="py-1">
+                          {filteredSubtaskAssignees.map((user: any, index: number) => {
+                            const isSelected = String(user.id) === newSubtask.assigneeId;
+                            return (
+                              <React.Fragment key={user.id}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setNewSubtask(prev => ({
+                                      ...prev,
+                                      assigneeId: String(user.id),
+                                      assigneeSearch: ''
+                                    }));
+                                    setShowSubtaskAssigneeDropdown(false);
+                                  }}
+                                  className={`w-full px-4 py-2.5 flex items-center justify-between hover:bg-gray-50 transition-colors text-left ${isSelected ? 'bg-blue-50/50' : ''}`}
+                                >
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <UserAvatar user={user} size="md" showRing={false} />
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>
+                                          {user.nome}
+                                        </p>
+                                      </div>
+                                      <p className="text-xs text-gray-500 truncate">{user.email}</p>
+                                    </div>
+                                  </div>
+                                  {isSelected && <Check className="w-4 h-4 text-blue-600 flex-shrink-0" />}
+                                </button>
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="p-4 text-center text-gray-500 text-sm">
+                          Nenhum usuário encontrado
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingSubtask(false);
+                      setNewSubtask({ title: '', description: '', assigneeId: '', assigneeSearch: '', deadline: '' });
+                      setShowSubtaskAssigneeDropdown(false);
+                    }}
+                    className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm font-medium transition-colors"
+                    disabled={isSavingSubtask}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingSubtask || !newSubtask.title.trim()}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSavingSubtask ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Salvar
+                  </button>
+                </div>
+              </div>
+            </form>
+          )}
+
+          <div className="divide-y divide-gray-100">
+            {subtasks.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">
+                <Circle className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+                <p className="text-sm">Adicione subtarefas para quebrar esta entrega em passos menores.</p>
+              </div>
+            ) : (
+              subtasks.map((subtask: any) => {
+                const assignedUsers = users.filter((u: any) => subtask.responsavelIds?.includes(u.id));
+                const isDone = subtask.status === 'done';
+                const isUpdating = isUpdatingSubtaskId === subtask.id;
+                const isEditingThisSubtask = subtaskToEdit?.id === subtask.id;
+
+                if (isEditingThisSubtask) {
+                  return (
+                    <form
+                      key={subtask.id}
+                      onSubmit={handleUpdateSubtask}
+                      className="p-4 md:p-6 bg-blue-50/40 border-l-4 border-blue-500 space-y-4 relative z-20"
+                    >
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-3">
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">
+                            Título
+                          </label>
+                          <input
+                            type="text"
+                            required
+                            value={editSubtaskForm.title}
+                            onChange={(e) => setEditSubtaskForm(prev => ({ ...prev, title: e.target.value }))}
+                            className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm"
+                            autoFocus
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">
+                            Data de Entrega
+                          </label>
+                          <input
+                            type="date"
+                            value={editSubtaskForm.deadline}
+                            onChange={(e) => setEditSubtaskForm(prev => ({ ...prev, deadline: e.target.value }))}
+                            className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm text-gray-600"
+                          />
+                        </div>
+                      </div>
+
+                      <textarea
+                        value={editSubtaskForm.description}
+                        onChange={(e) => setEditSubtaskForm(prev => ({ ...prev, description: e.target.value }))}
+                        rows={2}
+                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-500 outline-none text-sm resize-none"
+                        placeholder="Descrição curta da subtarefa"
+                      />
+
+                      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                        <div className="flex-1 space-y-2 relative">
+                          <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">
+                            Responsável
+                          </label>
+
+                          <div className="min-h-[46px] w-full px-2 py-2 bg-white border border-gray-200 rounded-xl focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-500 transition-all flex flex-wrap gap-2 items-center">
+                            {selectedEditSubtaskAssignee && (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-100 text-blue-700 rounded-lg text-sm font-medium shadow-sm">
+                                <UserAvatar user={selectedEditSubtaskAssignee} size="xs" showRing={false} />
+                                {selectedEditSubtaskAssignee.nome.split(' ')[0]}
+                                <button
+                                  type="button"
+                                  onClick={() => setEditSubtaskForm(prev => ({ ...prev, assigneeId: '', assigneeSearch: '' }))}
+                                  className="hover:bg-blue-100 rounded-full p-0.5 transition-colors"
+                                  title="Remover responsável"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </span>
+                            )}
+
+                            <div className="flex-1 relative min-w-[150px]">
+                              <input
+                                type="text"
+                                value={editSubtaskForm.assigneeSearch}
+                                onChange={(e) => {
+                                  setEditSubtaskForm(prev => ({ ...prev, assigneeSearch: e.target.value }));
+                                  setShowEditSubtaskAssigneeDropdown(true);
+                                }}
+                                onFocus={() => setShowEditSubtaskAssigneeDropdown(true)}
+                                className="w-full bg-transparent border-none outline-none text-sm px-2 py-1 placeholder-gray-400"
+                                placeholder={selectedEditSubtaskAssignee ? "Trocar responsável..." : "Pesquisar responsável..."}
+                              />
+                            </div>
+                          </div>
+
+                          {showEditSubtaskAssigneeDropdown && (
+                            <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-100 max-h-64 overflow-y-auto z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                              {!editSubtaskForm.assigneeSearch.trim() && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditSubtaskForm(prev => ({ ...prev, assigneeId: '', assigneeSearch: '' }));
+                                    setShowEditSubtaskAssigneeDropdown(false);
+                                  }}
+                                  className={`w-full px-4 py-2.5 flex items-center justify-between hover:bg-gray-50 transition-colors text-left ${!editSubtaskForm.assigneeId ? 'bg-blue-50/50' : ''}`}
+                                >
+                                  <div className="flex items-center gap-3">
+                                    <div className="h-8 w-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-400">
+                                      <User className="w-4 h-4" />
+                                    </div>
+                                    <div>
+                                      <p className="text-sm font-medium text-gray-900">Sem responsável</p>
+                                      <p className="text-xs text-gray-500">Manter subtarefa sem atribuição</p>
+                                    </div>
+                                  </div>
+                                  {!editSubtaskForm.assigneeId && <Check className="w-4 h-4 text-blue-600" />}
+                                </button>
+                              )}
+
+                              {filteredEditSubtaskAssignees.length > 0 ? (
+                                <div className="py-1">
+                                  {filteredEditSubtaskAssignees.map((user: any) => {
+                                    const isSelected = String(user.id) === editSubtaskForm.assigneeId;
+
+                                    return (
+                                      <button
+                                        key={user.id}
+                                        type="button"
+                                        onClick={() => {
+                                          setEditSubtaskForm(prev => ({
+                                            ...prev,
+                                            assigneeId: String(user.id),
+                                            assigneeSearch: ''
+                                          }));
+                                          setShowEditSubtaskAssigneeDropdown(false);
+                                        }}
+                                        className={`w-full px-4 py-2.5 flex items-center justify-between hover:bg-gray-50 transition-colors text-left ${isSelected ? 'bg-blue-50/50' : ''}`}
+                                      >
+                                        <div className="flex items-center gap-3 min-w-0">
+                                          <UserAvatar user={user} size="md" showRing={false} />
+                                          <div className="min-w-0">
+                                            <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>
+                                              {user.nome}
+                                            </p>
+                                            <p className="text-xs text-gray-500 truncate">{user.email}</p>
+                                          </div>
+                                        </div>
+                                        {isSelected && <Check className="w-4 h-4 text-blue-600 flex-shrink-0" />}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="p-4 text-center text-gray-500 text-sm">
+                                  Nenhum usuário encontrado
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={cancelEditingSubtask}
+                            className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm font-medium transition-colors"
+                            disabled={isSavingSubtask}
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={isSavingSubtask || !editSubtaskForm.title.trim()}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {isSavingSubtask ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                            Salvar
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  );
+                }
+
+                return (
+                  <div
+                    key={subtask.id}
+                    className={`px-4 py-3 md:px-6 grid grid-cols-[auto_1fr_auto] md:grid-cols-[auto_minmax(0,1fr)_170px_120px_95px_auto] items-center gap-3 transition-colors ${isDone ? 'bg-green-50/30' : 'hover:bg-gray-50'}`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleCycleSubtaskStatus(subtask)}
+                      disabled={isUpdating}
+                      className="p-1 rounded-full hover:bg-white transition-colors disabled:cursor-wait"
+                      title={`${getSubtaskStatusLabel(subtask.status)}. Clique para avançar o status.`}
+                    >
+                      {isUpdating ? <Loader2 className="w-5 h-5 animate-spin text-blue-600" /> : renderSubtaskStatusIcon(subtask.status)}
+                    </button>
+
+                    <div className="flex-1 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => navigate(getTaskUrl(subtask))}
+                        className={`block text-left font-semibold text-sm transition-colors truncate max-w-full ${isDone ? 'text-gray-500 line-through' : 'text-gray-900 hover:text-blue-600'}`}
+                        title={subtask.titulo}
+                      >
+                        {subtask.titulo}
+                      </button>
+
+                      {subtask.descricao && (
+                        <p className={`text-xs mt-0.5 truncate ${isDone ? 'text-gray-400' : 'text-gray-500'}`} title={subtask.descricao}>
+                          {subtask.descricao}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="col-start-2 md:col-start-auto flex items-center gap-1.5 min-w-0 text-xs text-gray-500">
+                      {assignedUsers.length > 0 ? (
+                        <>
+                          <div className="flex -space-x-1.5 flex-shrink-0">
+                            {assignedUsers.slice(0, 2).map((u: any) => (
+                              <UserAvatar key={u.id} user={u} size="xs" className="ring-2 ring-white" />
+                            ))}
+                          </div>
+                          <span className="truncate">
+                            {assignedUsers.map((u: any) => u.nome.split(' ')[0]).join(', ')}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="flex items-center gap-1 text-gray-400">
+                          <User className="w-3.5 h-3.5" />
+                          Sem responsável
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="col-start-2 md:col-start-auto flex items-center gap-1 text-xs text-gray-500">
+                      <Calendar className="w-3.5 h-3.5 text-gray-400" />
+                      <span>
+                        {subtask.prazo ? new Date(subtask.prazo + 'T12:00:00').toLocaleDateString('pt-BR') : 'Sem prazo'}
+                      </span>
+                    </div>
+
+                    <div className="col-start-2 md:col-start-auto">
+                      <span className={`inline-flex items-center justify-center px-2 py-1 rounded-md text-[11px] font-bold border whitespace-nowrap ${subtask.status === 'doing'
+                        ? 'bg-yellow-50 text-yellow-700 border-yellow-100'
+                        : isDone
+                          ? 'bg-green-50 text-green-700 border-green-100'
+                          : 'bg-gray-50 text-gray-500 border-gray-100'
+                        }`}>
+                        {getSubtaskStatusLabel(subtask.status)}
+                      </span>
+                    </div>
+
+                    <div className="col-start-3 row-start-1 md:row-start-auto md:col-start-auto flex items-center justify-end gap-1">
+                      {canDeleteSubtasks() && (
+                        <button
+                          type="button"
+                          onClick={() => setSubtaskToDelete(subtask)}
+                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Apagar subtarefa"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => runSubtaskAction(subtask, () => startEditingSubtask(subtask))}
+                        className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="Editar subtarefa"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Resources Section */}
       <div className="space-y-4">

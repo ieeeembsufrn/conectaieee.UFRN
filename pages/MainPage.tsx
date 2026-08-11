@@ -49,6 +49,7 @@ export const MainPage = () => {
 
   // Identify "Ramo Estudantil" chapter (assumed to be the main one or explicitly named 'Ramo')
   const ramoChapter = chapters.find((c: any) => (c.acronym && c.acronym === 'Ramo') || (c.name && c.name.includes('Ramo')) || c.id === 1);
+  const mainTasks = tasks.filter((t: any) => !t.parentTaskId);
 
   // Filter goals for Ramo
   const allRamoGoals = useMemo(() =>
@@ -174,7 +175,7 @@ export const MainPage = () => {
             <div className="p-2.5 bg-orange-50 text-orange-600 rounded-lg group-hover:bg-orange-600 group-hover:text-white transition-colors">
               <ClipboardList className="w-6 h-6" />
             </div>
-            <span className="text-2xl font-bold text-gray-900">{tasks.length}</span>
+            <span className="text-2xl font-bold text-gray-900">{mainTasks.length}</span>
           </div>
           <h3 className="font-semibold text-gray-900">Minhas Tarefas</h3>
           <p className="text-xs text-gray-500 mt-1">Acompanhe suas entregas</p>

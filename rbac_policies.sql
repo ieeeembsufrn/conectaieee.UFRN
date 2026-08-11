@@ -144,6 +144,74 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- Helper: Can user update task or parent task?
+CREATE OR REPLACE FUNCTION public.can_update_task_or_parent(_task_id bigint, _project_id bigint)
+RETURNS boolean AS $$
+DECLARE
+  _profile_id bigint;
+  _parent_task_id bigint;
+BEGIN
+  _profile_id := public.get_auth_profile_id();
+
+  IF public.can_manage_project(_project_id) THEN RETURN true; END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.task_assignees
+    WHERE task_id = _task_id AND profile_id = _profile_id
+  ) THEN
+    RETURN true;
+  END IF;
+
+  SELECT parent_task_id
+  INTO _parent_task_id
+  FROM public.tasks
+  WHERE id = _task_id;
+
+  IF _parent_task_id IS NOT NULL AND EXISTS (
+    SELECT 1 FROM public.task_assignees
+    WHERE task_id = _parent_task_id AND profile_id = _profile_id
+  ) THEN
+    RETURN true;
+  END IF;
+
+  RETURN false;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Helper: Validate that subtasks stay in the same project as their parent task
+CREATE OR REPLACE FUNCTION public.validate_task_parent_project()
+RETURNS trigger AS $$
+DECLARE
+  _parent_project_id bigint;
+BEGIN
+  IF NEW.parent_task_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT project_id
+  INTO _parent_project_id
+  FROM public.tasks
+  WHERE id = NEW.parent_task_id;
+
+  IF _parent_project_id IS NULL THEN
+    RAISE EXCEPTION 'Tarefa-pai não encontrada.';
+  END IF;
+
+  IF _parent_project_id <> NEW.project_id THEN
+    RAISE EXCEPTION 'Subtarefa deve pertencer ao mesmo projeto da tarefa-pai.';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_validate_task_parent_project ON public.tasks;
+CREATE TRIGGER trg_validate_task_parent_project
+BEFORE INSERT OR UPDATE OF parent_task_id, project_id
+ON public.tasks
+FOR EACH ROW
+EXECUTE FUNCTION public.validate_task_parent_project();
+
 
 -- ====================
 -- 1. CHAPTER GOALS
@@ -255,6 +323,9 @@ CREATE POLICY "Everyone views profile_chapters" ON public.profile_chapters FOR S
 DROP POLICY IF EXISTS "Everyone views profiles" ON public.profiles;
 CREATE POLICY "Everyone views profiles" ON public.profiles FOR SELECT TO authenticated USING (true);
 
+DROP POLICY IF EXISTS "Eligible users can create profiles" ON public.profiles;
+CREATE POLICY "Eligible users can create profiles" ON public.profiles FOR INSERT TO authenticated WITH CHECK (public.is_any_chapter_management());
+
 DROP POLICY IF EXISTS "Users edit own profile" ON public.profiles;
 CREATE POLICY "Users edit own profile" ON public.profiles
 FOR UPDATE TO authenticated
@@ -310,10 +381,19 @@ DROP POLICY IF EXISTS "Everyone can view tasks" ON public.tasks;
 CREATE POLICY "Everyone can view tasks" ON public.tasks FOR SELECT TO authenticated USING (true);
 
 DROP POLICY IF EXISTS "Project managers can create tasks" ON public.tasks;
-CREATE POLICY "Project managers can create tasks" ON public.tasks FOR INSERT TO authenticated WITH CHECK (public.can_manage_project(project_id));
+DROP POLICY IF EXISTS "Eligible users can create tasks or subtasks" ON public.tasks;
+CREATE POLICY "Eligible users can create tasks or subtasks" ON public.tasks
+FOR INSERT TO authenticated
+WITH CHECK (
+  public.can_manage_project(project_id)
+  OR (
+    parent_task_id IS NOT NULL
+    AND public.can_update_task_or_parent(parent_task_id, project_id)
+  )
+);
 
 DROP POLICY IF EXISTS "Eligible users can update tasks" ON public.tasks;
-CREATE POLICY "Eligible users can update tasks" ON public.tasks FOR UPDATE TO authenticated USING (public.can_update_task(id, project_id));
+CREATE POLICY "Eligible users can update tasks" ON public.tasks FOR UPDATE TO authenticated USING (public.can_update_task_or_parent(id, project_id));
 
 DROP POLICY IF EXISTS "Project managers can delete tasks" ON public.tasks;
 CREATE POLICY "Project managers can delete tasks" ON public.tasks FOR DELETE TO authenticated USING (public.can_manage_project(project_id));
@@ -323,7 +403,15 @@ DROP POLICY IF EXISTS "Everyone can view task assignees" ON public.task_assignee
 CREATE POLICY "Everyone can view task assignees" ON public.task_assignees FOR SELECT TO authenticated USING (true);
 
 DROP POLICY IF EXISTS "Project managers can manage assignees" ON public.task_assignees;
-CREATE POLICY "Project managers can manage assignees" ON public.task_assignees FOR ALL TO authenticated USING (public.can_manage_project((SELECT project_id FROM public.tasks WHERE id = task_id)));
+DROP POLICY IF EXISTS "Eligible users can manage task assignees" ON public.task_assignees;
+CREATE POLICY "Eligible users can manage task assignees" ON public.task_assignees
+FOR ALL TO authenticated
+USING (
+  public.can_update_task_or_parent(
+    task_id,
+    (SELECT project_id FROM public.tasks WHERE id = task_id)
+  )
+);
 
 -- ====================
 -- 10. FINANCES
@@ -376,30 +464,41 @@ BEGIN
   VALUES (
     new.id,
     new.email,
-    new.raw_user_meta_data->>'full_name',
+    COALESCE(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
     new.raw_user_meta_data->>'role',
     new.raw_user_meta_data->>'avatar_initials',
     new.raw_user_meta_data->>'phone',
     new.raw_user_meta_data->>'matricula',
     CASE 
-      WHEN new.raw_user_meta_data->>'birth_date' = '' THEN NULL 
+      WHEN new.raw_user_meta_data->>'birth_date' IS NULL OR new.raw_user_meta_data->>'birth_date' = '' THEN NULL 
       ELSE (new.raw_user_meta_data->>'birth_date')::date 
     END,
     new.raw_user_meta_data->>'membership_number',
-    COALESCE(new.raw_user_meta_data->'social_links', '{}'::jsonb),
+    CASE 
+      WHEN jsonb_typeof(new.raw_user_meta_data->'social_links') = 'object' THEN new.raw_user_meta_data->'social_links'
+      ELSE '{}'::jsonb
+    END,
     new.raw_user_meta_data->>'course',
-    ARRAY(SELECT jsonb_array_elements_text(COALESCE(new.raw_user_meta_data->'skills', '[]'::jsonb))), 
+    CASE 
+      WHEN jsonb_typeof(new.raw_user_meta_data->'skills') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(new.raw_user_meta_data->'skills'))
+      WHEN new.raw_user_meta_data->>'skills' IS NOT NULL AND new.raw_user_meta_data->>'skills' != '' THEN ARRAY[new.raw_user_meta_data->>'skills']
+      ELSE '{}'::text[]
+    END, 
     new.raw_user_meta_data->>'photo_url',
     new.raw_user_meta_data->>'ieee_membership_date',
     new.raw_user_meta_data->>'notes',
-    ARRAY(SELECT jsonb_array_elements_text(COALESCE(new.raw_user_meta_data->'cpf', '[]'::jsonb))),
+    CASE 
+      WHEN jsonb_typeof(new.raw_user_meta_data->'cpf') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(new.raw_user_meta_data->'cpf'))
+      WHEN new.raw_user_meta_data->>'cpf' IS NOT NULL AND new.raw_user_meta_data->>'cpf' != '' THEN ARRAY[new.raw_user_meta_data->>'cpf']
+      ELSE '{}'::text[]
+    END,
     new.raw_user_meta_data->>'bio',
     new.raw_user_meta_data->>'cover_config'
   )
   RETURNING id INTO _profile_id;
 
   -- 2. Cria o Vínculo com os Capítulos
-  IF (new.raw_user_meta_data->'chapters') IS NOT NULL AND jsonb_array_length(new.raw_user_meta_data->'chapters') > 0 THEN
+  IF jsonb_typeof(new.raw_user_meta_data->'chapters') = 'array' AND jsonb_array_length(new.raw_user_meta_data->'chapters') > 0 THEN
     INSERT INTO public.profile_chapters (profile_id, chapter_id, role, permission_slug)
     SELECT 
       _profile_id,
