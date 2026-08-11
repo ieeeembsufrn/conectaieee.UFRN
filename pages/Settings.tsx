@@ -40,6 +40,99 @@ const TW_COLORS = [
    'pink', 'rose'
 ];
 
+const MAX_AVATAR_SOURCE_SIZE = 20 * 1024 * 1024;
+const MAX_AVATAR_OUTPUT_SIZE = 2 * 1024 * 1024;
+const AVATAR_MAX_DIMENSION = 1024;
+const ACCEPTED_AVATAR_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'];
+
+const getFileExtension = (file: File) => file.name.split('.').pop()?.toLowerCase() || '';
+
+const isHeicFile = (file: File) => {
+   const extension = getFileExtension(file);
+   return file.type === 'image/heic' || file.type === 'image/heif' || extension === 'heic' || extension === 'heif';
+};
+
+const isAcceptedAvatarFile = (file: File) => {
+   const extension = getFileExtension(file);
+   return ACCEPTED_AVATAR_EXTENSIONS.includes(extension) || ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'].includes(file.type);
+};
+
+const blobToImage = (blob: Blob) => {
+   return new Promise<HTMLImageElement>((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const image = new window.Image();
+
+      image.onload = () => {
+         URL.revokeObjectURL(url);
+         resolve(image);
+      };
+
+      image.onerror = () => {
+         URL.revokeObjectURL(url);
+         reject(new Error('Não foi possível ler a imagem selecionada.'));
+      };
+
+      image.src = url;
+   });
+};
+
+const canvasToBlob = (canvas: HTMLCanvasElement, quality: number) => {
+   return new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+         if (blob) {
+            resolve(blob);
+         } else {
+            reject(new Error('Não foi possível comprimir a imagem.'));
+         }
+      }, 'image/jpeg', quality);
+   });
+};
+
+const prepareAvatarFile = async (file: File) => {
+   let sourceBlob: Blob = file;
+
+   if (isHeicFile(file)) {
+      const { default: heic2any } = await import('heic2any');
+      const converted = await heic2any({
+         blob: file,
+         toType: 'image/jpeg',
+         quality: 0.9
+      });
+      sourceBlob = Array.isArray(converted) ? converted[0] : converted;
+   }
+
+   const image = await blobToImage(sourceBlob);
+   const scale = Math.min(1, AVATAR_MAX_DIMENSION / Math.max(image.width, image.height));
+   const width = Math.max(1, Math.round(image.width * scale));
+   const height = Math.max(1, Math.round(image.height * scale));
+   const canvas = document.createElement('canvas');
+   const context = canvas.getContext('2d');
+
+   if (!context) {
+      throw new Error('Não foi possível preparar a imagem.');
+   }
+
+   canvas.width = width;
+   canvas.height = height;
+   context.fillStyle = '#ffffff';
+   context.fillRect(0, 0, width, height);
+   context.drawImage(image, 0, 0, width, height);
+
+   const qualities = [0.82, 0.72, 0.62, 0.52];
+   let compressedBlob = await canvasToBlob(canvas, qualities[0]);
+
+   for (const quality of qualities.slice(1)) {
+      if (compressedBlob.size <= MAX_AVATAR_OUTPUT_SIZE) break;
+      compressedBlob = await canvasToBlob(canvas, quality);
+   }
+
+   if (compressedBlob.size > MAX_AVATAR_OUTPUT_SIZE) {
+      throw new Error('A imagem continua muito grande após compressão. Use uma imagem menor.');
+   }
+
+   return new File([compressedBlob], 'profile.jpg', { type: 'image/jpeg' });
+};
+
 export const Settings = () => {
    const { users, chapters, fetchData } = useData();
    const { profile, refreshProfile } = useAuth();
@@ -205,19 +298,21 @@ export const Settings = () => {
 
       if (!file || !selectedUserId) return;
 
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-         setAvatarError('Use uma imagem JPG, PNG ou WebP.');
+      if (!isAcceptedAvatarFile(file)) {
+         setAvatarError('Use uma imagem JPG, PNG, WebP, HEIC ou HEIF.');
          return;
       }
 
-      if (file.size > 5 * 1024 * 1024) {
-         setAvatarError('A imagem deve ter no máximo 5 MB.');
+      if (file.size > MAX_AVATAR_SOURCE_SIZE) {
+         setAvatarError('A imagem original deve ter no máximo 20 MB.');
          return;
       }
 
       setAvatarUploading(true);
 
       try {
+         const avatarFile = await prepareAvatarFile(file);
+
          const { error: currentUserError } = await supabase.auth.getUser();
          if (currentUserError) {
             throw new Error('Sessão expirada. Faça login novamente.');
@@ -239,7 +334,7 @@ export const Settings = () => {
             },
             body: JSON.stringify({
                userId: selectedUserId,
-               contentType: file.type
+               contentType: avatarFile.type
             })
          });
 
@@ -254,8 +349,8 @@ export const Settings = () => {
 
          const uploadResponse = await fetch(data.presignedUrl, {
             method: 'PUT',
-            headers: { 'Content-Type': file.type },
-            body: file
+            headers: { 'Content-Type': avatarFile.type },
+            body: avatarFile
          });
 
          if (!uploadResponse.ok) {
@@ -586,7 +681,7 @@ export const Settings = () => {
                                  {avatarUploading ? 'Enviando...' : 'Enviar foto'}
                                  <input
                                     type="file"
-                                    accept="image/jpeg,image/png,image/webp"
+                                    accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
                                     className="hidden"
                                     onChange={handleAvatarUpload}
                                     disabled={avatarUploading}
