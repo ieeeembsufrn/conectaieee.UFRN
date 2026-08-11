@@ -1,8 +1,28 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, User, Mail, GraduationCap, Briefcase, Flag, Save, Loader2, Check, ChevronDown, Trash2 } from 'lucide-react';
+import {
+  X,
+  User,
+  Mail,
+  GraduationCap,
+  Briefcase,
+  Save,
+  Loader2,
+  ChevronDown,
+  Trash2,
+  Calendar,
+  BadgeCheck,
+  Image,
+  Linkedin,
+  Github,
+  Instagram,
+  Phone,
+  FileText,
+  Palette
+} from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useData } from '../context/DataContext';
+import { getAuthRecoveryRedirectUrl } from '../lib/appUrl';
 
 interface MemberModalProps {
   isOpen: boolean;
@@ -29,20 +49,75 @@ const PERMISSIONS = [
   { slug: 'admin', label: 'Admin' }
 ];
 
+const getInitials = (name: string) => {
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+};
+
+const getDefaultFormData = () => ({
+  nome: '',
+  email: '',
+  matricula: '',
+  role: 'Membro',
+  chapterIds: [] as number[],
+  chapterRoles: {} as Record<string, string>,
+  chapterPermissions: {} as Record<string, string>,
+  phone: '',
+  cpf: '',
+  birthDate: '',
+  membershipNumber: '',
+  course: '',
+  ieeeMembershipDate: '',
+  photoUrl: '',
+  coverConfig: '',
+  linkedin: '',
+  github: '',
+  instagram: '',
+  skillsText: '',
+  notes: '',
+  bio: ''
+});
+
+const parseSkills = (value: string) => {
+  return value
+    .split(/[\n,]/)
+    .map((skill) => skill.trim())
+    .filter(Boolean);
+};
+
+const getFunctionErrorMessage = async (error: any) => {
+  const response = error?.context;
+  if (response instanceof Response) {
+    try {
+      const body = await response.clone().json();
+      if (body?.error) return body.error;
+    } catch (_parseError) {
+      // Keep the SDK message when the function response is not JSON.
+    }
+  }
+
+  return error?.message || 'Não foi possível criar o usuário.';
+};
+
 export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps) => {
   const { chapters, fetchData } = useData();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSendingRecoveryLink, setIsSendingRecoveryLink] = useState(false);
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false);
+  const ramoChapter = chapters.find((c: any) =>
+    c.id === 1 ||
+    c.sigla === 'Ramo' ||
+    c.acronym === 'Ramo' ||
+    String(c.nome || c.name || '').toLowerCase().includes('ramo')
+  );
 
   // State
-  const [formData, setFormData] = useState({
-    nome: '',
-    email: '',
-    matricula: '',
-    role: 'Membro', // Cargo principal / Título
-    chapterIds: [] as number[],
-    chapterRoles: {} as Record<string, string>, // Mapa { chapterId: role }
-    chapterPermissions: {} as Record<string, string> // Mapa { chapterId: permission_slug }
-  });
+  const [formData, setFormData] = useState(getDefaultFormData());
 
   // Dropdown UI State
   const [showChapterDropdown, setShowChapterDropdown] = useState(false);
@@ -60,18 +135,26 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
           chapterRoles: memberToEdit.chapterRoles || {},
           chapterPermissions: memberToEdit.profileChapters
             ? memberToEdit.profileChapters.reduce((acc: any, curr: any) => ({ ...acc, [curr.chapter_id]: curr.permission_slug }), {})
-            : {}
+            : {},
+          phone: memberToEdit.phone || '',
+          cpf: memberToEdit.cpf?.[0] || '',
+          birthDate: memberToEdit.dataNascimento ? memberToEdit.dataNascimento.split('T')[0] : '',
+          membershipNumber: memberToEdit.nroMembresia || memberToEdit.membership_number || '',
+          course: memberToEdit.course || '',
+          ieeeMembershipDate: memberToEdit.ieee_membership_date || '',
+          photoUrl: memberToEdit.photo_url || memberToEdit.foto || '',
+          coverConfig: memberToEdit.coverConfig || memberToEdit.cover_config || '',
+          linkedin: memberToEdit.social?.linkedin || memberToEdit.social_links?.linkedin || '',
+          github: memberToEdit.social?.github || memberToEdit.social_links?.github || '',
+          instagram: memberToEdit.social?.instagram || memberToEdit.social_links?.instagram || '',
+          skillsText: (memberToEdit.habilidades || memberToEdit.skills || []).join(', '),
+          notes: memberToEdit.notes || '',
+          bio: memberToEdit.bio || ''
         });
+        setShowAdvancedFields(false);
       } else {
-        setFormData({
-          nome: '',
-          email: '',
-          matricula: '',
-          role: 'Membro',
-          chapterIds: [],
-          chapterRoles: {},
-          chapterPermissions: {}
-        });
+        setFormData(getDefaultFormData());
+        setShowAdvancedFields(false);
       }
     }
   }, [isOpen, memberToEdit]);
@@ -93,72 +176,140 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
     e.preventDefault();
     setIsSubmitting(true);
 
+    const fullName = formData.nome.trim();
+    const email = formData.email.trim().toLowerCase();
+    const skills = parseSkills(formData.skillsText);
+    const chapterAssignments = formData.chapterIds.map(cid => ({
+      id: cid,
+      role: formData.chapterRoles[cid] || 'Membro',
+      permission_slug: formData.chapterPermissions[cid] || 'member'
+    }));
+
     const profilePayload: any = {
-      full_name: formData.nome,
-      email: formData.email,
-      matricula: formData.matricula,
+      full_name: fullName,
+      email,
+      matricula: formData.matricula.trim(),
       role: formData.role, // Título principal
+      phone: formData.phone.trim() || null,
+      cpf: formData.cpf.trim() ? [formData.cpf.trim()] : [],
+      birth_date: formData.birthDate || null,
+      membership_number: formData.membershipNumber.trim() || null,
+      course: formData.course.trim() || null,
+      ieee_membership_date: formData.ieeeMembershipDate.trim() || null,
+      photo_url: formData.photoUrl.trim() || null,
+      cover_config: formData.coverConfig.trim() || null,
+      social_links: {
+        linkedin: formData.linkedin.trim(),
+        github: formData.github.trim(),
+        instagram: formData.instagram.trim()
+      },
+      skills,
+      notes: formData.notes.trim() || null,
+      bio: formData.bio.trim() || null,
       // REMOVED: chapter_ids, chapter_roles (Normalized)
       // Se for criação, adicionar iniciais básicas
       ...(!memberToEdit && {
-        avatar_initials: formData.nome.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()
+        avatar_initials: getInitials(fullName)
       })
     };
 
     try {
-      let profileId;
-
       if (memberToEdit) {
-        profileId = memberToEdit.id;
+        const profileId = memberToEdit.id;
         const { error } = await supabase
           .from('profiles')
           .update(profilePayload)
           .eq('id', profileId);
         if (error) throw error;
+
+        const { error: deleteChaptersError } = await supabase
+          .from('profile_chapters')
+          .delete()
+          .eq('profile_id', profileId);
+        if (deleteChaptersError) throw deleteChaptersError;
+
+        const chapterInserts = chapterAssignments.map(chapter => ({
+          profile_id: profileId,
+          chapter_id: chapter.id,
+          role: chapter.role,
+          permission_slug: chapter.permission_slug
+        }));
+
+        if (chapterInserts.length > 0) {
+          const { error: chapErr } = await supabase.from('profile_chapters').insert(chapterInserts);
+          if (chapErr) throw chapErr;
+        }
       } else {
-        const { data, error } = await supabase
-          .from('profiles')
-          .insert([profilePayload])
-          .select()
-          .single();
-        if (error) throw error;
-        profileId = data.id;
-      }
+        if (chapterAssignments.length === 0) {
+          throw new Error('Adicione pelo menos um capítulo ou use a opção de Membro externo.');
+        }
 
-      // Handle Chapter Memberships
-      // Strategy: Delete all for this user and re-insert.
-      // NOTE: This might be dangerous if permissions are stored here (permission_slug). 
-      // Ideally we would preserve permissions if they existed, but currently UI (NewMemberModal) does not support editing permissions.
-      // It mainly supports adding to chapters and setting "roles" (titles).
-      // We will default permission to 'member' or null if not provided, assuming RBAC is handled elsewhere or via defaults?
-      // The schema says `permission_slug` references `permissions`.
-      // The old UI didn't seem to set distinct permission levels per chapter, just roles (strings).
-      // We'll set `permission_slug` to 'member' by default for now if it's a new entry, or try to preserve?
-      // Since this is "Delete All", preservation requires fetching first.
-      // But given the scope, I will just insert with default permission 'member' if we are adding them.
-      // This is a simplification. To do it properly, we'd need to upsert or diff.
-      // Since the request is normalization, getting the structure right is key.
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
 
-      // First, let's delete existing
-      await supabase.from('profile_chapters').delete().eq('profile_id', profileId);
+        let activeSession = sessionData.session;
+        const expiresAt = activeSession?.expires_at ? activeSession.expires_at * 1000 : 0;
 
-      const chapterInserts = formData.chapterIds.map(cid => ({
-        profile_id: profileId,
-        chapter_id: cid,
-        role: formData.chapterRoles[cid] || 'Membro',
-        permission_slug: formData.chapterPermissions[cid] || 'member'
-      }));
+        if (activeSession && expiresAt && expiresAt - Date.now() < 60_000) {
+          const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+          if (refreshError) throw refreshError;
+          activeSession = refreshedData.session;
+        }
 
-      if (chapterInserts.length > 0) {
-        const { error: chapErr } = await supabase.from('profile_chapters').insert(chapterInserts);
-        if (chapErr) console.error("Error saving profile chapters:", chapErr);
+        const accessToken = activeSession?.access_token;
+        if (!accessToken) {
+          throw new Error('Sua sessão expirou. Faça login novamente antes de cadastrar um usuário.');
+        }
+
+        const { error: userValidationError } = await supabase.auth.getUser(accessToken);
+        if (userValidationError) {
+          throw new Error('Sua sessão não pôde ser validada. Faça login novamente antes de cadastrar um usuário.');
+        }
+
+        const { data, error } = await supabase.functions.invoke('admin-create-user', {
+          headers: {
+            Authorization: `Bearer ${accessToken}`
+          },
+          body: {
+            email,
+            full_name: fullName,
+            matricula: formData.matricula.trim(),
+            role: formData.role || 'Membro',
+            avatar_initials: getInitials(fullName),
+            phone: formData.phone.trim() || null,
+            cpf: formData.cpf.trim() ? [formData.cpf.trim()] : [],
+            birth_date: formData.birthDate || null,
+            membership_number: formData.membershipNumber.trim() || null,
+            course: formData.course.trim() || null,
+            ieee_membership_date: formData.ieeeMembershipDate.trim() || null,
+            photo_url: formData.photoUrl.trim() || undefined,
+            cover_config: formData.coverConfig.trim() || undefined,
+            social_links: {
+              linkedin: formData.linkedin.trim(),
+              github: formData.github.trim(),
+              instagram: formData.instagram.trim()
+            },
+            skills,
+            notes: formData.notes.trim() || null,
+            bio: formData.bio.trim() || null,
+            chapters: chapterAssignments
+          }
+        });
+
+        if (error) {
+          throw new Error(await getFunctionErrorMessage(error));
+        }
+
+        if (data?.error) {
+          throw new Error(data.error);
+        }
       }
 
       await fetchData(true);
       onClose();
-    } catch (e) {
+    } catch (e: any) {
       console.error("Erro ao salvar membro:", e);
-      alert("Erro ao salvar dados do membro. Verifique o console para mais detalhes.");
+      alert(e.message || "Erro ao salvar dados do membro. Verifique o console para mais detalhes.");
     } finally {
       setIsSubmitting(false);
     }
@@ -183,11 +334,14 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
   const handleRemoveChapter = (id: number) => {
     setFormData(prev => {
       const newRoles = { ...prev.chapterRoles };
+      const newPermissions = { ...prev.chapterPermissions };
       delete newRoles[id];
+      delete newPermissions[id];
       return {
         ...prev,
         chapterIds: prev.chapterIds.filter(c => c !== id),
-        chapterRoles: newRoles
+        chapterRoles: newRoles,
+        chapterPermissions: newPermissions
       };
     });
   };
@@ -199,20 +353,61 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
     }));
   };
 
-  const handleChangePermission = (chapterId: number, newPermission: string) => {
+	  const handleChangePermission = (chapterId: number, newPermission: string) => {
+	    setFormData(prev => ({
+	      ...prev,
+	      chapterPermissions: { ...prev.chapterPermissions, [chapterId]: newPermission }
+	    }));
+	  };
+
+  const handleSendRecoveryLink = async () => {
+    const email = formData.email.trim();
+    if (!email) {
+      alert('Informe um email antes de enviar o link de recuperação.');
+      return;
+    }
+
+    setIsSendingRecoveryLink(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: getAuthRecoveryRedirectUrl()
+      });
+
+      if (error) throw error;
+
+      alert(`Link de recuperação enviado para ${email}.`);
+    } catch (error: any) {
+      console.error('Erro ao enviar link de recuperação:', error);
+      alert(error.message || 'Não foi possível enviar o link de recuperação.');
+    } finally {
+      setIsSendingRecoveryLink(false);
+    }
+  };
+
+  const handleSetExternalMember = () => {
+    if (!ramoChapter) {
+      alert('Capítulo Ramo não encontrado. Verifique o cadastro de capítulos.');
+      return;
+    }
+
     setFormData(prev => ({
       ...prev,
-      chapterPermissions: { ...prev.chapterPermissions, [chapterId]: newPermission }
+      role: 'External',
+      matricula: 'EXTERNO',
+      chapterIds: [ramoChapter.id],
+      chapterRoles: { [ramoChapter.id]: 'External' },
+      chapterPermissions: { [ramoChapter.id]: 'external' }
     }));
+    setShowChapterDropdown(false);
   };
 
   return (
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-gray-100 flex flex-col animate-in zoom-in-95 duration-200 max-h-[90vh]">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full overflow-hidden border border-gray-100 flex flex-col animate-in zoom-in-95 duration-200 max-h-[90vh]">
         <div className="flex items-center justify-between p-6 border-b border-gray-100 bg-gray-50 flex-shrink-0">
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <User className="w-5 h-5 text-blue-600" />
-            {memberToEdit ? 'Editar Membro' : 'Cadastrar Novo Aluno'}
+            {memberToEdit ? 'Editar Membro' : 'Cadastrar Novo Usuário'}
           </h2>
           <button onClick={onClose} className="p-2 text-gray-400 hover:bg-gray-200 rounded-full transition-colors">
             <X className="w-5 h-5" />
@@ -291,18 +486,29 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
                 <p className="text-[10px] text-gray-400 mt-1">Cargo exibido no card principal e listas gerais.</p>
               </div>
 
-              {/* Multi-Select Capítulos com Cargos Específicos */}
-              <div className="relative" ref={chapterDropdownRef}>
-                <div className="flex justify-between items-center mb-2">
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">Cargos por Capítulo</label>
-                  <button
-                    type="button"
-                    onClick={() => setShowChapterDropdown(!showChapterDropdown)}
-                    className="text-xs text-blue-600 font-bold hover:underline flex items-center gap-1"
-                  >
-                    + Adicionar Capítulo
-                  </button>
-                </div>
+	                {/* Multi-Select Capítulos com Cargos Específicos */}
+	              <div className="relative" ref={chapterDropdownRef}>
+	                <div className="flex justify-between items-center mb-2">
+	                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide">Cargos por Capítulo</label>
+	                  <div className="flex items-center gap-3">
+	                    <button
+	                      type="button"
+	                      onClick={handleSetExternalMember}
+	                      disabled={!ramoChapter}
+	                      className="text-xs text-amber-700 font-bold hover:underline disabled:text-gray-300 disabled:no-underline flex items-center gap-1"
+	                      title="Vincula ao Ramo com permissão External"
+	                    >
+	                      Membro externo
+	                    </button>
+	                    <button
+	                      type="button"
+	                      onClick={() => setShowChapterDropdown(!showChapterDropdown)}
+	                      className="text-xs text-blue-600 font-bold hover:underline flex items-center gap-1"
+	                    >
+	                      + Adicionar Capítulo
+	                    </button>
+	                  </div>
+	                </div>
 
                 {/* Dropdown de Adição */}
                 {showChapterDropdown && (
@@ -360,21 +566,27 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
                           ))}
                         </select>
 
-                        {/* Permission Selector */}
-                        <div title="Nível de Permissão">
-                          <select
-                            value={formData.chapterPermissions[id] || 'member'}
-                            onChange={(e) => handleChangePermission(id, e.target.value)}
-                            className={`border border-gray-300 text-xs rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-24 p-1.5 outline-none ${(formData.chapterPermissions[id] === 'admin' || formData.chapterPermissions[id] === 'chair')
-                                ? 'bg-yellow-50 text-yellow-700 font-bold border-yellow-200'
-                                : 'bg-white text-gray-700'
-                              }`}
-                          >
-                            {PERMISSIONS.map(p => (
-                              <option key={p.slug} value={p.slug}>{p.label}</option>
-                            ))}
-                          </select>
-                        </div>
+	                        {/* Permission Selector */}
+	                        <div title="Nível de Permissão">
+	                          {formData.chapterPermissions[id] === 'external' ? (
+	                            <span className="inline-flex items-center justify-center w-24 px-2 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 text-xs font-bold">
+	                              External
+	                            </span>
+	                          ) : (
+	                            <select
+	                              value={formData.chapterPermissions[id] || 'member'}
+	                              onChange={(e) => handleChangePermission(id, e.target.value)}
+	                              className={`border border-gray-300 text-xs rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-24 p-1.5 outline-none ${(formData.chapterPermissions[id] === 'admin' || formData.chapterPermissions[id] === 'chair')
+	                                  ? 'bg-yellow-50 text-yellow-700 font-bold border-yellow-200'
+	                                  : 'bg-white text-gray-700'
+	                                }`}
+	                            >
+	                              {PERMISSIONS.map(p => (
+	                                <option key={p.slug} value={p.slug}>{p.label}</option>
+	                              ))}
+	                            </select>
+	                          )}
+	                        </div>
 
                         <button
                           type="button"
@@ -385,15 +597,233 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
                         </button>
                       </div>
                     );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
+	                  })}
+	                </div>
+	                {memberToEdit && (
+	                  <button
+	                    type="button"
+	                    onClick={handleSendRecoveryLink}
+	                    disabled={isSendingRecoveryLink || !formData.email.trim()}
+	                    className="mt-3 w-full px-4 py-2.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed border border-blue-100"
+	                  >
+	                    {isSendingRecoveryLink ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+	                    Enviar link de recuperação de senha
+	                  </button>
+	                )}
+	              </div>
+	            </div>
+	          </div>
 
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100 mt-2 flex-shrink-0">
+          <div className="border border-gray-100 rounded-xl overflow-hidden bg-white">
             <button
               type="button"
+              onClick={() => setShowAdvancedFields(prev => !prev)}
+              className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-gray-900">Informações extras do perfil</p>
+                  <p className="text-xs text-gray-500 truncate">Telefone, redes, IEEE, bio, foto e dados acadêmicos.</p>
+                </div>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showAdvancedFields ? 'rotate-180' : ''}`} />
+            </button>
+
+            {showAdvancedFields && (
+              <div className="px-4 pb-4 pt-1 border-t border-gray-100 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Telefone</label>
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="text"
+                        value={formData.phone}
+                        onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                        placeholder="(61) 99999-9999"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">CPF</label>
+                    <input
+                      type="text"
+                      value={formData.cpf}
+                      onChange={e => setFormData({ ...formData, cpf: e.target.value })}
+                      className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                      placeholder="000.000.000-00"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Data de Nascimento</label>
+                    <div className="relative">
+                      <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="date"
+                        value={formData.birthDate}
+                        onChange={e => setFormData({ ...formData, birthDate: e.target.value })}
+                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Curso</label>
+                    <div className="relative">
+                      <GraduationCap className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="text"
+                        value={formData.course}
+                        onChange={e => setFormData({ ...formData, course: e.target.value })}
+                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                        placeholder="Engenharia de Computação"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Nº de Membresia IEEE</label>
+                    <div className="relative">
+                      <BadgeCheck className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="text"
+                        value={formData.membershipNumber}
+                        onChange={e => setFormData({ ...formData, membershipNumber: e.target.value })}
+                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                        placeholder="Ex: 98765432"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Entrada IEEE</label>
+                    <input
+                      type="text"
+                      value={formData.ieeeMembershipDate}
+                      onChange={e => setFormData({ ...formData, ieeeMembershipDate: e.target.value })}
+                      className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                      placeholder="Ex: 03/2025"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">URL da Foto</label>
+                    <div className="relative">
+                      <Image className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="url"
+                        value={formData.photoUrl}
+                        onChange={e => setFormData({ ...formData, photoUrl: e.target.value })}
+                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                        placeholder="https://..."
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Capa do Perfil</label>
+                    <div className="relative">
+                      <Palette className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="text"
+                        value={formData.coverConfig}
+                        onChange={e => setFormData({ ...formData, coverConfig: e.target.value })}
+                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                        placeholder="from-blue-600 to-indigo-800"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">LinkedIn</label>
+                    <div className="relative">
+                      <Linkedin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="url"
+                        value={formData.linkedin}
+                        onChange={e => setFormData({ ...formData, linkedin: e.target.value })}
+                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                        placeholder="https://..."
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">GitHub</label>
+                    <div className="relative">
+                      <Github className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="url"
+                        value={formData.github}
+                        onChange={e => setFormData({ ...formData, github: e.target.value })}
+                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                        placeholder="https://..."
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Instagram</label>
+                    <div className="relative">
+                      <Instagram className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="url"
+                        value={formData.instagram}
+                        onChange={e => setFormData({ ...formData, instagram: e.target.value })}
+                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm"
+                        placeholder="https://..."
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Habilidades</label>
+                  <textarea
+                    value={formData.skillsText}
+                    onChange={e => setFormData({ ...formData, skillsText: e.target.value })}
+                    rows={2}
+                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm resize-none"
+                    placeholder="Python, Gestão de projetos, Marketing"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Observações internas</label>
+                  <textarea
+                    value={formData.notes}
+                    onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                    rows={2}
+                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm resize-none"
+                    placeholder="Notas administrativas sobre o cadastro."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Bio do Perfil</label>
+                  <textarea
+                    value={formData.bio}
+                    onChange={e => setFormData({ ...formData, bio: e.target.value })}
+                    rows={4}
+                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-blue-100 outline-none transition-all text-sm resize-y"
+                    placeholder="Resumo profissional, trajetória, interesses e experiências."
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+		          <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100 mt-2 flex-shrink-0">
+		            <button
+		              type="button"
               onClick={onClose}
               className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl text-sm font-medium transition-colors"
             >
@@ -405,7 +835,7 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
               className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all flex items-center gap-2"
             >
               {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Salvar Alterações
+              {memberToEdit ? 'Salvar Alterações' : 'Cadastrar e enviar convite'}
             </button>
           </div>
         </form>

@@ -34,3 +34,6 @@ dev-dist/
 
 # Environment
 .env
+
+# Local agent/skill cache
+.agents/

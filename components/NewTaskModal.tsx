@@ -5,6 +5,7 @@ import { UserAvatar, getLocalDateISOString } from '../lib/utils';
 import { supabase } from '../lib/supabase';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
+import { hasExternalPermission } from '../lib/access';
 import { nanoid } from 'nanoid';
 
 interface NewTaskModalProps {
@@ -17,6 +18,12 @@ interface NewTaskModalProps {
 export const NewTaskModal = ({ isOpen, onClose, projeto = null, taskToEdit = null }: NewTaskModalProps) => {
   const { users, projects, fetchData } = useData();
   const { profile } = useAuth();
+
+  const ExternalBadge = () => (
+    <span className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+      External
+    </span>
+  );
 
   // Helper to calculate default dates
   const getTodayDate = () => getLocalDateISOString();
@@ -412,6 +419,7 @@ export const NewTaskModal = ({ isOpen, onClose, projeto = null, taskToEdit = nul
                 <span key={user.id} className="inline-flex items-center gap-1.5 px-3 py-1 bg-white border border-blue-100 text-blue-700 rounded-lg text-sm font-medium shadow-sm">
                   <UserAvatar user={user} size="xs" showRing={false} />
                   {user.nome.split(' ')[0]}
+                  {hasExternalPermission(user) && <ExternalBadge />}
                   <button
                     type="button"
                     onClick={() => handleSelectUser(user.id)}
@@ -448,14 +456,17 @@ export const NewTaskModal = ({ isOpen, onClose, projeto = null, taskToEdit = nul
                           onClick={() => handleSelectUser(user.id)}
                           className={`w-full px-4 py-2.5 flex items-center justify-between hover:bg-gray-50 transition-colors text-left ${isSelected ? 'bg-blue-50/50' : ''}`}
                         >
-                          <div className="flex items-center gap-3">
-                            <UserAvatar user={user} size="md" showRing={false} />
-                            <div>
-                              <p className={`text-sm font-medium ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>
-                                {user.nome}
-                              </p>
-                              <p className="text-xs text-gray-500">{user.email}</p>
-                            </div>
+	                          <div className="flex items-center gap-3 min-w-0">
+	                            <UserAvatar user={user} size="md" showRing={false} />
+	                            <div className="min-w-0">
+	                              <div className="flex items-center gap-2 min-w-0">
+	                                <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>
+	                                  {user.nome}
+	                                </p>
+	                                {hasExternalPermission(user) && <ExternalBadge />}
+	                              </div>
+	                              <p className="text-xs text-gray-500">{user.email}</p>
+	                            </div>
                           </div>
                           {isSelected && <Check className="w-4 h-4 text-blue-600" />}
                         </button>

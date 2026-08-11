@@ -99,6 +99,11 @@ export const ProjectDetails = () => {
   const { projects, tasks, users, events, fetchData } = useData();
   const { withProjectEditPermission, withTaskCreatePermission, withTaskEditPermission } = usePermissions();
   const { showAlert } = useGlobalAlert();
+  const isExternalRoute = location.pathname.startsWith('/my-projects');
+  const getTaskDetailsUrl = (task: any) => {
+    const taskUrl = getTaskUrl(task);
+    return isExternalRoute ? taskUrl.replace('/tasks/', '/my-projects/tasks/') : taskUrl;
+  };
 
   const [showNewTaskModal, setShowNewTaskModal] = useState(false);
   const [showEditProjectModal, setShowEditProjectModal] = useState(false);
@@ -543,11 +548,16 @@ export const ProjectDetails = () => {
       {/* Header do Projeto */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden relative">
         <div className="p-4 md:p-6">
-          <button
-            onClick={() => {
-              if (location.state && location.state.from) {
-                navigate(location.state.from);
-              } else {
+	          <button
+	            onClick={() => {
+              if (isExternalRoute) {
+                navigate('/my-projects');
+                return;
+              }
+
+	              if (location.state && location.state.from) {
+	                navigate(location.state.from);
+	              } else {
                 navigate('/projects');
               }
             }}
@@ -867,7 +877,7 @@ export const ProjectDetails = () => {
                             setDraggedTaskId(null);
                             setDragOverColumn(null);
                           }}
-                          onClick={() => navigate(getTaskUrl(tarefa))}
+                          onClick={() => navigate(getTaskDetailsUrl(tarefa))}
                           className={`relative bg-white rounded-lg border border-gray-200 p-3 cursor-grab active:cursor-grabbing hover:shadow-md hover:border-blue-200 transition-all ${isArchived ? 'opacity-75 grayscale-[0.5]' : ''} ${isDragging ? 'opacity-40' : ''} ${isUpdatingThis ? 'opacity-70 pointer-events-none' : ''}`}
                         >
                           {isUpdatingThis && (
@@ -971,7 +981,7 @@ export const ProjectDetails = () => {
                       <div
                         key={tarefa.id}
                         className={`p-4 md:p-6 transition-colors group cursor-pointer relative ${isArchived ? 'bg-slate-50 opacity-75 grayscale-[0.5] hover:opacity-100' : 'hover:bg-gray-50'}`}
-                        onClick={() => navigate(getTaskUrl(tarefa))}
+	                        onClick={() => navigate(getTaskDetailsUrl(tarefa))}
                       >
                         <div className="flex gap-4 items-center">
                           <div className="flex-1 min-w-0">

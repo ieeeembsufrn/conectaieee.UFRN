@@ -9,10 +9,11 @@ import { App } from './App';
 import { registerSW } from 'virtual:pwa-register';
 
 if (import.meta.env.PROD) {
-  registerSW({
+  const updateSW = registerSW({
     immediate: true,
     onNeedRefresh() {
       console.log("Novo conteúdo disponível. Atualizando...");
+      updateSW(true);
     },
     onOfflineReady() {
       console.log("App pronto para uso offline.");

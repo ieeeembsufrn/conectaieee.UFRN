@@ -10,6 +10,9 @@ import { Projects } from './pages/Projects';
 import { ProjectDetails } from './pages/ProjectDetails';
 import { ChapterDetails } from './pages/ChapterDetails';
 import { MyTasks } from './pages/MyTasks';
+import { MyProjects } from './pages/MyProjects';
+import { MyProfileSettings } from './pages/MyProfileSettings';
+import { ExternalDetailPage } from './pages/ExternalDetailPage';
 import { TaskDetails } from './pages/TaskDetails';
 import { Team } from './pages/Team';
 import { UserDetails } from './pages/UserDetails';
@@ -23,6 +26,7 @@ import { WelcomeNotificationModal } from './components/WelcomeNotificationModal'
 import { LoginPage } from './pages/LoginPage';
 import { UpdatePasswordPage } from './pages/UpdatePasswordPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { isExternalOnlyProfile } from './lib/access';
 
 // Admin Pages
 import { AdminPage } from './pages/AdminPage';
@@ -82,6 +86,10 @@ const AppLayout = () => {
         <p className="font-medium text-gray-600">Carregando ProjectHub...</p>
       </div>
     );
+  }
+
+  if (isExternalOnlyProfile(profile)) {
+    return <Navigate to="/my-projects" replace />;
   }
 
   // Se o usuário não tiver perfil carregado ainda, mostra um loading ou avatar padrão
@@ -242,6 +250,16 @@ export function App() {
 
               {/* Private Routes */}
               <Route element={<ProtectedRoute />}>
+                <Route path="/my-projects" element={<MyProjects />} />
+                <Route
+                  path="/my-projects/projects/:projectId"
+                  element={<ExternalDetailPage title="Detalhes do projeto"><ProjectDetails /></ExternalDetailPage>}
+                />
+                <Route
+                  path="/my-projects/tasks/:taskId"
+                  element={<ExternalDetailPage title="Detalhes da tarefa"><TaskDetails /></ExternalDetailPage>}
+                />
+                <Route path="/my-profile" element={<MyProfileSettings />} />
                 <Route path="/*" element={<AppLayout />} />
               </Route>
             </Routes>

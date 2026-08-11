@@ -20,7 +20,8 @@ import {
    Check,
    ChevronDown,
    Eye,
-   EyeOff
+   EyeOff,
+   Upload
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useData } from '../context/DataContext';
@@ -41,9 +42,11 @@ const TW_COLORS = [
 
 export const Settings = () => {
    const { users, chapters, fetchData } = useData();
-   const { profile } = useAuth();
+   const { profile, refreshProfile } = useAuth();
    const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
    const [loading, setLoading] = useState(false);
+   const [avatarUploading, setAvatarUploading] = useState(false);
+   const [avatarError, setAvatarError] = useState('');
    const [successMsg, setSuccessMsg] = useState('');
 
    // Gradient Picker State
@@ -193,6 +196,93 @@ export const Settings = () => {
          ...prev,
          habilidades: prev.habilidades.filter(s => s !== skill)
       }));
+   };
+
+   const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      setAvatarError('');
+
+      if (!file || !selectedUserId) return;
+
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+         setAvatarError('Use uma imagem JPG, PNG ou WebP.');
+         return;
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+         setAvatarError('A imagem deve ter no máximo 5 MB.');
+         return;
+      }
+
+      setAvatarUploading(true);
+
+      try {
+         const { error: currentUserError } = await supabase.auth.getUser();
+         if (currentUserError) {
+            throw new Error('Sessão expirada. Faça login novamente.');
+         }
+
+         const { data: sessionData } = await supabase.auth.getSession();
+         const accessToken = sessionData.session?.access_token;
+
+         if (!accessToken) {
+            throw new Error('Sessão expirada. Faça login novamente.');
+         }
+
+         const functionResponse = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/upload-avatar`, {
+            method: 'POST',
+            headers: {
+               Authorization: `Bearer ${accessToken}`,
+               apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+               'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+               userId: selectedUserId,
+               contentType: file.type
+            })
+         });
+
+         const data = await functionResponse.json().catch(() => null);
+         if (!functionResponse.ok) {
+            throw new Error(data?.error || data?.message || `Falha na função de upload (${functionResponse.status}).`);
+         }
+
+         if (!data?.presignedUrl || !data?.publicUrl) {
+            throw new Error('Resposta inválida da função de upload.');
+         }
+
+         const uploadResponse = await fetch(data.presignedUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': file.type },
+            body: file
+         });
+
+         if (!uploadResponse.ok) {
+            throw new Error('Falha ao enviar imagem para o storage.');
+         }
+
+         const publicUrl = data.publicUrl;
+         const versionedUrl = `${publicUrl}${publicUrl.includes('?') ? '&' : '?'}v=${Date.now()}`;
+
+         const { error: updateError } = await supabase
+            .from('profiles')
+            .update({ photo_url: versionedUrl })
+            .eq('id', selectedUserId);
+
+         if (updateError) throw updateError;
+
+         setFormData(prev => ({ ...prev, foto: versionedUrl }));
+         await fetchData(true);
+         await refreshProfile();
+         setSuccessMsg('Foto atualizada com sucesso!');
+         setTimeout(() => setSuccessMsg(''), 3000);
+      } catch (err) {
+         console.error('Erro ao enviar avatar:', err);
+         setAvatarError(err instanceof Error ? err.message : 'Não foi possível enviar a foto. Tente novamente.');
+      } finally {
+         setAvatarUploading(false);
+      }
    };
 
    const applyGradient = () => {
@@ -485,6 +575,24 @@ export const Settings = () => {
                            <label className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
                               <Image className="w-3.5 h-3.5" /> URL da Foto
                            </label>
+                           <div className="flex items-center gap-3 mb-2">
+                              <img
+                                 src={formData.foto || selectedUser.photo_url || selectedUser.foto}
+                                 alt="Preview do avatar"
+                                 className="w-14 h-14 rounded-xl border border-gray-200 bg-gray-50 object-cover shrink-0"
+                              />
+                              <label className={`h-10 px-4 rounded-xl border text-sm font-semibold transition-colors flex items-center gap-2 cursor-pointer ${avatarUploading ? 'bg-gray-100 text-gray-400 border-gray-200 pointer-events-none' : 'bg-blue-50 text-blue-700 border-blue-100 hover:bg-blue-100'}`}>
+                                 {avatarUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                                 {avatarUploading ? 'Enviando...' : 'Enviar foto'}
+                                 <input
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp"
+                                    className="hidden"
+                                    onChange={handleAvatarUpload}
+                                    disabled={avatarUploading}
+                                 />
+                              </label>
+                           </div>
                            <input
                               type="text"
                               className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-orange-100 outline-none transition-all text-sm truncate"
@@ -492,6 +600,7 @@ export const Settings = () => {
                               value={formData.foto}
                               onChange={e => setFormData({ ...formData, foto: e.target.value })}
                            />
+                           {avatarError && <p className="text-xs font-medium text-red-600">{avatarError}</p>}
                         </div>
 
                         {/* Input de Capa + Gradient Picker */}

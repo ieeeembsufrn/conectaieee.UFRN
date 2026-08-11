@@ -5,6 +5,7 @@ import { Loader2, Lock, ArrowRight, Zap, CheckCircle } from 'lucide-react';
 
 export const UpdatePasswordPage = () => {
     const navigate = useNavigate();
+    const [checkingSession, setCheckingSession] = useState(true);
     const [loading, setLoading] = useState(false);
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -12,15 +13,37 @@ export const UpdatePasswordPage = () => {
     const [success, setSuccess] = useState(false);
 
     useEffect(() => {
-        // Verifica se há sessão. Se não houver, redireciona para login.
-        // O Supabase DEVE ter logado o usuário automaticamente via link mágico antes de chegar aqui.
+        let timeoutId: ReturnType<typeof setTimeout>;
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if (event === 'PASSWORD_RECOVERY' || session) {
+                setCheckingSession(false);
+            }
+        });
+
         const checkSession = async () => {
             const { data: { session } } = await supabase.auth.getSession();
-            if (!session) {
-                navigate('/login');
+            if (session || sessionStorage.getItem('passwordRecoveryInProgress') === 'true') {
+                setCheckingSession(false);
+                return;
             }
+
+            timeoutId = setTimeout(async () => {
+                const { data: { session: delayedSession } } = await supabase.auth.getSession();
+                if (delayedSession) {
+                    setCheckingSession(false);
+                } else {
+                    navigate('/login');
+                }
+            }, 1500);
         };
+
         checkSession();
+
+        return () => {
+            clearTimeout(timeoutId);
+            subscription.unsubscribe();
+        };
     }, [navigate]);
 
     const handleUpdatePassword = async (e: React.FormEvent) => {
@@ -46,6 +69,7 @@ export const UpdatePasswordPage = () => {
 
             if (error) throw error;
 
+            sessionStorage.removeItem('passwordRecoveryInProgress');
             setSuccess(true);
             setTimeout(() => {
                 navigate('/dashboard');
@@ -58,6 +82,17 @@ export const UpdatePasswordPage = () => {
             setLoading(false);
         }
     };
+
+    if (checkingSession) {
+        return (
+            <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+                <div className="flex items-center gap-3 text-gray-600">
+                    <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                    <span className="text-sm font-medium">Validando link de recuperação...</span>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4 relative overflow-hidden">

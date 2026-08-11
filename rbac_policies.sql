@@ -91,6 +91,101 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- Helper: Is External-only user
+-- External-only users are restricted to the projects/tasks they participate in.
+CREATE OR REPLACE FUNCTION public.is_external_user()
+RETURNS boolean AS $$
+DECLARE
+  _profile_id bigint;
+BEGIN
+  _profile_id := public.get_auth_profile_id();
+
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.profile_chapters
+    WHERE profile_id = _profile_id
+      AND permission_slug = 'external'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM public.profile_chapters
+    WHERE profile_id = _profile_id
+      AND permission_slug IN ('admin', 'chair', 'manager', 'member')
+  );
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+-- Helper: Can external user view project?
+CREATE OR REPLACE FUNCTION public.can_external_view_project(_project_id bigint)
+RETURNS boolean AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.project_members
+    WHERE project_id = _project_id
+      AND profile_id = public.get_auth_profile_id()
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM public.tasks t
+    JOIN public.task_assignees ta ON ta.task_id = t.id
+    WHERE t.project_id = _project_id
+      AND ta.profile_id = public.get_auth_profile_id()
+  );
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+-- Helper: Can external user view task?
+CREATE OR REPLACE FUNCTION public.can_external_view_task(_task_id bigint, _project_id bigint)
+RETURNS boolean AS $$
+BEGIN
+  RETURN public.can_external_view_project(_project_id)
+    AND (
+      public.can_manage_project(_project_id)
+      OR
+      EXISTS (
+        SELECT 1
+        FROM public.task_assignees
+        WHERE task_id = _task_id
+          AND profile_id = public.get_auth_profile_id()
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM public.tasks child
+        JOIN public.task_assignees ta ON ta.task_id = child.id
+        WHERE child.parent_task_id = _task_id
+          AND ta.profile_id = public.get_auth_profile_id()
+      )
+    );
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
+-- Helper: Can external user view profile?
+CREATE OR REPLACE FUNCTION public.can_external_view_profile(_profile_id bigint)
+RETURNS boolean AS $$
+BEGIN
+  IF _profile_id = public.get_auth_profile_id() THEN
+    RETURN true;
+  END IF;
+
+  RETURN EXISTS (
+    SELECT 1
+    FROM public.project_members mine
+    JOIN public.project_members target ON target.project_id = mine.project_id
+    WHERE mine.profile_id = public.get_auth_profile_id()
+      AND target.profile_id = _profile_id
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM public.tasks t
+    JOIN public.task_assignees mine ON mine.task_id = t.id
+    JOIN public.task_assignees target ON target.task_id = t.id
+    WHERE mine.profile_id = public.get_auth_profile_id()
+      AND target.profile_id = _profile_id
+  );
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+
 -- Helper: Can manage project (Manager, Admin, Chair)
 CREATE OR REPLACE FUNCTION public.can_manage_project(_project_id bigint)
 RETURNS boolean AS $$
@@ -217,7 +312,9 @@ EXECUTE FUNCTION public.validate_task_parent_project();
 -- 1. CHAPTER GOALS
 -- ====================
 DROP POLICY IF EXISTS "Everyone can view chapter goals" ON public.chapter_goals;
-CREATE POLICY "Everyone can view chapter goals" ON public.chapter_goals FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone can view chapter goals" ON public.chapter_goals
+FOR SELECT TO authenticated
+USING (NOT public.is_external_user());
 
 DROP POLICY IF EXISTS "Admin/Chair/Manager can manage chapter goals" ON public.chapter_goals;
 CREATE POLICY "Admin/Chair/Manager can manage chapter goals" ON public.chapter_goals
@@ -237,7 +334,17 @@ USING (
 -- 2. CHAPTERS
 -- ====================
 DROP POLICY IF EXISTS "Everyone can view chapters" ON public.chapters;
-CREATE POLICY "Everyone can view chapters" ON public.chapters FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone can view chapters" ON public.chapters
+FOR SELECT TO authenticated
+USING (
+  NOT public.is_external_user()
+  OR EXISTS (
+    SELECT 1
+    FROM public.project_chapters pc
+    WHERE pc.chapter_id = id
+      AND public.can_external_view_project(pc.project_id)
+  )
+);
 
 DROP POLICY IF EXISTS "Admin/Chair can edit chapters" ON public.chapters;
 CREATE POLICY "Admin/Chair can edit chapters" ON public.chapters
@@ -248,7 +355,9 @@ USING (public.is_chapter_management(id));
 -- 3. CLASSIFIEDS
 -- ====================
 DROP POLICY IF EXISTS "Everyone can view classifieds" ON public.classifieds;
-CREATE POLICY "Everyone can view classifieds" ON public.classifieds FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone can view classifieds" ON public.classifieds
+FOR SELECT TO authenticated
+USING (NOT public.is_external_user());
 
 -- Edit: Creator (implied by linking to profile?) OR Admin
 -- Note: classifieds table has no direct creator_id column in provided schema, but has `responsible_name`.
@@ -277,7 +386,9 @@ CREATE POLICY "Admin can delete classifieds" ON public.classifieds FOR DELETE TO
 -- 4. EVENTS
 -- ====================
 DROP POLICY IF EXISTS "Everyone can view events" ON public.events;
-CREATE POLICY "Everyone can view events" ON public.events FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone can view events" ON public.events
+FOR SELECT TO authenticated
+USING (NOT public.is_external_user());
 
 -- Edit: Events of their Chapter.
 DROP POLICY IF EXISTS "Members can edit own chapter events" ON public.events;
@@ -305,7 +416,9 @@ FOR ALL TO authenticated
 USING (public.is_admin());
 
 DROP POLICY IF EXISTS "Everyone can view permissions" ON public.permissions;
-CREATE POLICY "Everyone can view permissions" ON public.permissions FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone can view permissions" ON public.permissions
+FOR SELECT TO authenticated
+USING (NOT public.is_external_user());
 
 
 -- ====================
@@ -317,11 +430,21 @@ DROP POLICY IF EXISTS "Admin manages profile_chapters" ON public.profile_chapter
 CREATE POLICY "Admin manages profile_chapters" ON public.profile_chapters FOR ALL TO authenticated USING (public.is_admin());
 
 DROP POLICY IF EXISTS "Everyone views profile_chapters" ON public.profile_chapters;
-CREATE POLICY "Everyone views profile_chapters" ON public.profile_chapters FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone views profile_chapters" ON public.profile_chapters
+FOR SELECT TO authenticated
+USING (
+  NOT public.is_external_user()
+  OR profile_id = public.get_auth_profile_id()
+);
 
 -- profiles: Member edits own, Admin edits all.
 DROP POLICY IF EXISTS "Everyone views profiles" ON public.profiles;
-CREATE POLICY "Everyone views profiles" ON public.profiles FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone views profiles" ON public.profiles
+FOR SELECT TO authenticated
+USING (
+  NOT public.is_external_user()
+  OR public.can_external_view_profile(id)
+);
 
 DROP POLICY IF EXISTS "Eligible users can create profiles" ON public.profiles;
 CREATE POLICY "Eligible users can create profiles" ON public.profiles FOR INSERT TO authenticated WITH CHECK (public.is_any_chapter_management());
@@ -330,7 +453,7 @@ DROP POLICY IF EXISTS "Users edit own profile" ON public.profiles;
 CREATE POLICY "Users edit own profile" ON public.profiles
 FOR UPDATE TO authenticated
 USING (
-  id = (SELECT id FROM public.profiles WHERE auth_id = auth.uid()) 
+  id = (SELECT id FROM public.profiles WHERE auth_id = auth.uid())
   OR 
   public.is_admin()
 );
@@ -341,7 +464,12 @@ USING (
 
 -- Policies for PROJECTS
 DROP POLICY IF EXISTS "Everyone can view projects" ON public.projects;
-CREATE POLICY "Everyone can view projects" ON public.projects FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone can view projects" ON public.projects
+FOR SELECT TO authenticated
+USING (
+  NOT public.is_external_user()
+  OR public.can_external_view_project(id)
+);
 
 DROP POLICY IF EXISTS "Eligible users can create projects" ON public.projects;
 CREATE POLICY "Eligible users can create projects" ON public.projects FOR INSERT TO authenticated WITH CHECK (public.is_any_chapter_management());
@@ -351,7 +479,12 @@ CREATE POLICY "Eligible users can manage projects" ON public.projects FOR ALL TO
 
 -- Policies for PROJECT_MEMBERS
 DROP POLICY IF EXISTS "Everyone can view project members" ON public.project_members;
-CREATE POLICY "Everyone can view project members" ON public.project_members FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone can view project members" ON public.project_members
+FOR SELECT TO authenticated
+USING (
+  NOT public.is_external_user()
+  OR public.can_external_view_project(project_id)
+);
 
 DROP POLICY IF EXISTS "Project managers can insert members" ON public.project_members;
 CREATE POLICY "Project managers can insert members" ON public.project_members FOR INSERT TO authenticated WITH CHECK (public.can_manage_project(project_id));
@@ -364,7 +497,12 @@ CREATE POLICY "Project managers can delete members" ON public.project_members FO
 
 -- Policies for PROJECT_CHAPTERS
 DROP POLICY IF EXISTS "Everyone can view project chapters" ON public.project_chapters;
-CREATE POLICY "Everyone can view project chapters" ON public.project_chapters FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone can view project chapters" ON public.project_chapters
+FOR SELECT TO authenticated
+USING (
+  NOT public.is_external_user()
+  OR public.can_external_view_project(project_id)
+);
 
 DROP POLICY IF EXISTS "Project managers can manage chapters" ON public.project_chapters;
 CREATE POLICY "Project managers can manage chapters" ON public.project_chapters FOR ALL TO authenticated USING (public.can_manage_project(project_id));
@@ -378,7 +516,12 @@ CREATE POLICY "Chapter managers can insert chapters" ON public.project_chapters 
 
 -- Policies for TASKS
 DROP POLICY IF EXISTS "Everyone can view tasks" ON public.tasks;
-CREATE POLICY "Everyone can view tasks" ON public.tasks FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone can view tasks" ON public.tasks
+FOR SELECT TO authenticated
+USING (
+  NOT public.is_external_user()
+  OR public.can_external_view_task(id, project_id)
+);
 
 DROP POLICY IF EXISTS "Project managers can create tasks" ON public.tasks;
 DROP POLICY IF EXISTS "Eligible users can create tasks or subtasks" ON public.tasks;
@@ -400,7 +543,18 @@ CREATE POLICY "Project managers can delete tasks" ON public.tasks FOR DELETE TO 
 
 -- Policies for TASK_ASSIGNEES
 DROP POLICY IF EXISTS "Everyone can view task assignees" ON public.task_assignees;
-CREATE POLICY "Everyone can view task assignees" ON public.task_assignees FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Everyone can view task assignees" ON public.task_assignees
+FOR SELECT TO authenticated
+USING (
+  NOT public.is_external_user()
+  OR profile_id = public.get_auth_profile_id()
+  OR EXISTS (
+    SELECT 1
+    FROM public.tasks t
+    WHERE t.id = task_id
+      AND public.can_external_view_task(t.id, t.project_id)
+  )
+);
 
 DROP POLICY IF EXISTS "Project managers can manage assignees" ON public.task_assignees;
 DROP POLICY IF EXISTS "Eligible users can manage task assignees" ON public.task_assignees;
@@ -438,7 +592,7 @@ DROP POLICY IF EXISTS "Everyone can view tools" ON public.tools;
 CREATE POLICY "Everyone can view tools" ON public.tools 
 FOR SELECT 
 TO authenticated 
-USING (true);
+USING (NOT public.is_external_user());
 
 -- 2. Permissão de Gerenciamento (Apenas Admins)
 -- Permite Insert, Update, Delete apenas para quem for Admin

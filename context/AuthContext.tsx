@@ -10,9 +10,25 @@ interface AuthContextType {
     profile: Profile | null;
     loading: boolean;
     signOut: () => Promise<void>;
+    refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const PASSWORD_RECOVERY_FLAG = 'passwordRecoveryInProgress';
+
+const isPasswordRecoveryUrl = () => {
+    const locationText = `${window.location.href} ${window.location.hash} ${window.location.search}`;
+    return locationText.includes('type=recovery') || locationText.includes('type%3Drecovery');
+};
+
+const navigateToPasswordRecovery = () => {
+    sessionStorage.setItem(PASSWORD_RECOVERY_FLAG, 'true');
+
+    if (window.location.hash !== '#/update-password') {
+        window.location.hash = '/update-password';
+    }
+};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [session, setSession] = useState<Session | null>(null);
@@ -21,10 +37,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        if (isPasswordRecoveryUrl()) {
+            sessionStorage.setItem(PASSWORD_RECOVERY_FLAG, 'true');
+        }
+
         // 1. Get initial session
         supabase.auth.getSession().then(({ data: { session } }) => {
             setSession(session);
             setUser(session?.user ?? null);
+
+            if (session && sessionStorage.getItem(PASSWORD_RECOVERY_FLAG) === 'true') {
+                navigateToPasswordRecovery();
+            }
+
             if (session?.user) {
                 fetchProfile(session.user.id);
             } else {
@@ -33,9 +58,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         // 2. Listen for auth changes
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             setSession(session);
             setUser(session?.user ?? null);
+
+            if (
+                event === 'PASSWORD_RECOVERY' ||
+                (session && sessionStorage.getItem(PASSWORD_RECOVERY_FLAG) === 'true')
+            ) {
+                navigateToPasswordRecovery();
+            }
 
             if (session?.user) {
                 fetchProfile(session.user.id);
@@ -75,6 +107,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     };
 
+    const refreshProfile = async () => {
+        if (user?.id) {
+            await fetchProfile(user.id);
+        }
+    };
+
     const signOut = async () => {
         await supabase.auth.signOut();
         setProfile(null);
@@ -83,7 +121,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     return (
-        <AuthContext.Provider value={{ session, user, profile, loading, signOut }}>
+        <AuthContext.Provider value={{ session, user, profile, loading, signOut, refreshProfile }}>
             {children}
         </AuthContext.Provider>
     );

@@ -22,6 +22,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useData } from '../../context/DataContext';
 import { UserAvatar } from '../../lib/utils';
+import { hasExternalPermission } from '../../lib/access';
 import { MemberModal } from '../../components/MemberModal';
 import { supabase } from '../../lib/supabase';
 
@@ -62,14 +63,18 @@ export const PresidentPage = () => {
       const matchesChapter = chapterFilter === 'Todos' ||
         (user.chapterIds && user.chapterIds.includes(Number(chapterFilter)));
 
-      let matchesRole = roleFilter === 'Todos';
-      if (!matchesRole) {
-        const mainRoleMatch = user.role === roleFilter;
-        const chapterRoleMatch = user.chapterRoles
-          ? Object.values(user.chapterRoles).some((r: any) => r === roleFilter)
-          : false;
-        matchesRole = mainRoleMatch || chapterRoleMatch;
-      }
+	      let matchesRole = roleFilter === 'Todos';
+	      if (!matchesRole) {
+	        if (roleFilter === 'Externos') {
+	          matchesRole = hasExternalPermission(user);
+	        } else {
+	          const mainRoleMatch = user.role === roleFilter;
+	          const chapterRoleMatch = user.chapterRoles
+	            ? Object.values(user.chapterRoles).some((r: any) => r === roleFilter)
+	            : false;
+	          matchesRole = mainRoleMatch || chapterRoleMatch;
+	        }
+	      }
 
       return matchesSearch && matchesChapter && matchesRole;
     });
@@ -191,7 +196,7 @@ export const PresidentPage = () => {
       const isChapPres = u.chapterRoles ? Object.values(u.chapterRoles).some((r: any) => String(r).toLowerCase().includes('presidente')) : false;
       return isMainPres || isChapPres;
     }).length,
-    semCapitulo: users.filter((u: any) => !u.chapterIds || u.chapterIds.length === 0).length
+	    externos: users.filter((u: any) => hasExternalPermission(u)).length
   };
 
   return (
@@ -236,7 +241,7 @@ export const PresidentPage = () => {
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
           >
             <UserPlus className="w-4 h-4" />
-            Cadastrar Aluno
+            Cadastrar Novo Usuário
           </button>
         </div>
       </div>
@@ -266,8 +271,8 @@ export const PresidentPage = () => {
             <Briefcase className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-sm text-gray-500 font-medium">Sem Capítulo</p>
-            <p className="text-2xl font-bold text-gray-900">{stats.semCapitulo}</p>
+	            <p className="text-sm text-gray-500 font-medium">Externos</p>
+	            <p className="text-2xl font-bold text-gray-900">{stats.externos}</p>
           </div>
         </div>
       </div>
@@ -317,10 +322,11 @@ export const PresidentPage = () => {
                 <option value="Conselheiro">Conselheiro</option>
                 <option value="Presidente">Presidente</option>
                 <option value="Vice-Presidente">Vice-Presidente</option>
-                <option value="Diretor de Projetos">Diretor</option>
-                <option value="Membro">Membro</option>
-                <option value="Trainee">Trainee</option>
-              </select>
+	                <option value="Diretor de Projetos">Diretor</option>
+	                <option value="Membro">Membro</option>
+	                <option value="Trainee">Trainee</option>
+	                <option value="Externos">Externos</option>
+	              </select>
             </div>
           </div>
         </div>

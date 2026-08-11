@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, Calendar, Briefcase, User, Tag, ExternalLink,
   Edit2, Globe, Save, Plus, Trash2, Loader2, Code,
@@ -15,6 +15,7 @@ import { ConfirmationModal } from '../components/ConfirmationModal';
 import { supabase } from '../lib/supabase';
 import { usePermissions } from '../hooks/usePermissions';
 import { useGlobalAlert } from '../components/GlobalAlert';
+import { hasExternalPermission } from '../lib/access';
 import { nanoid } from 'nanoid';
 
 // --- Types (Single Source of Truth Structure) ---
@@ -75,9 +76,20 @@ const parseTaskResources = (task: any): ResourceItem[] => {
 export const TaskDetails = () => {
   const { taskId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { tasks, fetchData, users, projects } = useData();
   const { checkProjectPermissions, checkTaskPermissions, withTaskEditPermission } = usePermissions();
   const { showAlert } = useGlobalAlert();
+  const isExternalRoute = location.pathname.startsWith('/my-projects');
+  const getTaskDetailsUrl = (task: any) => {
+    const taskUrl = getTaskUrl(task);
+    return isExternalRoute ? taskUrl.replace('/tasks/', '/my-projects/tasks/') : taskUrl;
+  };
+  const ExternalBadge = () => (
+    <span className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+      External
+    </span>
+  );
 
   // UI States
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -596,7 +608,7 @@ export const TaskDetails = () => {
 
       {/* Header Navigation */}
       <button
-        onClick={() => navigate(-1)}
+        onClick={() => navigate(isExternalRoute ? '/my-projects' : -1)}
         className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
       >
         <ArrowLeft className="w-5 h-5" />
@@ -614,11 +626,11 @@ export const TaskDetails = () => {
               </div>
 
               {parentTask && (
-                <button
-                  type="button"
-                  onClick={() => navigate(getTaskUrl(parentTask))}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-sm font-medium transition-colors"
-                >
+	                <button
+	                  type="button"
+	                  onClick={() => navigate(getTaskDetailsUrl(parentTask))}
+	                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-sm font-medium transition-colors"
+	                >
                   <ArrowLeft className="w-3.5 h-3.5" />
                   Subtarefa de: {parentTask.titulo}
                 </button>
@@ -864,11 +876,12 @@ export const TaskDetails = () => {
                   </label>
 
                   <div className="min-h-[46px] w-full px-2 py-2 bg-white border border-gray-200 rounded-xl focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-500 transition-all flex flex-wrap gap-2 items-center">
-                    {selectedSubtaskAssignee && (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-100 text-blue-700 rounded-lg text-sm font-medium shadow-sm">
-                        <UserAvatar user={selectedSubtaskAssignee} size="xs" showRing={false} />
-                        {selectedSubtaskAssignee.nome.split(' ')[0]}
-                        <button
+	                    {selectedSubtaskAssignee && (
+	                      <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-100 text-blue-700 rounded-lg text-sm font-medium shadow-sm">
+	                        <UserAvatar user={selectedSubtaskAssignee} size="xs" showRing={false} />
+	                        {selectedSubtaskAssignee.nome.split(' ')[0]}
+	                        {hasExternalPermission(selectedSubtaskAssignee) && <ExternalBadge />}
+	                        <button
                           type="button"
                           onClick={() => setNewSubtask(prev => ({ ...prev, assigneeId: '', assigneeSearch: '' }))}
                           className="hover:bg-blue-100 rounded-full p-0.5 transition-colors"
@@ -939,11 +952,12 @@ export const TaskDetails = () => {
                                   <div className="flex items-center gap-3 min-w-0">
                                     <UserAvatar user={user} size="md" showRing={false} />
                                     <div className="min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>
-                                          {user.nome}
-                                        </p>
-                                      </div>
+	                                      <div className="flex items-center gap-2">
+	                                        <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>
+	                                          {user.nome}
+	                                        </p>
+	                                        {hasExternalPermission(user) && <ExternalBadge />}
+	                                      </div>
                                       <p className="text-xs text-gray-500 truncate">{user.email}</p>
                                     </div>
                                   </div>
@@ -1051,11 +1065,12 @@ export const TaskDetails = () => {
                           </label>
 
                           <div className="min-h-[46px] w-full px-2 py-2 bg-white border border-gray-200 rounded-xl focus-within:ring-2 focus-within:ring-blue-100 focus-within:border-blue-500 transition-all flex flex-wrap gap-2 items-center">
-                            {selectedEditSubtaskAssignee && (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-100 text-blue-700 rounded-lg text-sm font-medium shadow-sm">
-                                <UserAvatar user={selectedEditSubtaskAssignee} size="xs" showRing={false} />
-                                {selectedEditSubtaskAssignee.nome.split(' ')[0]}
-                                <button
+	                            {selectedEditSubtaskAssignee && (
+	                              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-50 border border-blue-100 text-blue-700 rounded-lg text-sm font-medium shadow-sm">
+	                                <UserAvatar user={selectedEditSubtaskAssignee} size="xs" showRing={false} />
+	                                {selectedEditSubtaskAssignee.nome.split(' ')[0]}
+	                                {hasExternalPermission(selectedEditSubtaskAssignee) && <ExternalBadge />}
+	                                <button
                                   type="button"
                                   onClick={() => setEditSubtaskForm(prev => ({ ...prev, assigneeId: '', assigneeSearch: '' }))}
                                   className="hover:bg-blue-100 rounded-full p-0.5 transition-colors"
@@ -1127,10 +1142,13 @@ export const TaskDetails = () => {
                                         <div className="flex items-center gap-3 min-w-0">
                                           <UserAvatar user={user} size="md" showRing={false} />
                                           <div className="min-w-0">
-                                            <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>
-                                              {user.nome}
-                                            </p>
-                                            <p className="text-xs text-gray-500 truncate">{user.email}</p>
+	                                            <div className="flex items-center gap-2 min-w-0">
+	                                              <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-700' : 'text-gray-900'}`}>
+	                                                {user.nome}
+	                                              </p>
+	                                              {hasExternalPermission(user) && <ExternalBadge />}
+	                                            </div>
+	                                            <p className="text-xs text-gray-500 truncate">{user.email}</p>
                                           </div>
                                         </div>
                                         {isSelected && <Check className="w-4 h-4 text-blue-600 flex-shrink-0" />}
@@ -1186,10 +1204,10 @@ export const TaskDetails = () => {
                     </button>
 
                     <div className="flex-1 min-w-0">
-                      <button
-                        type="button"
-                        onClick={() => navigate(getTaskUrl(subtask))}
-                        className={`block text-left font-semibold text-sm transition-colors truncate max-w-full ${isDone ? 'text-gray-500 line-through' : 'text-gray-900 hover:text-blue-600'}`}
+	                      <button
+	                        type="button"
+	                        onClick={() => navigate(getTaskDetailsUrl(subtask))}
+	                        className={`block text-left font-semibold text-sm transition-colors truncate max-w-full ${isDone ? 'text-gray-500 line-through' : 'text-gray-900 hover:text-blue-600'}`}
                         title={subtask.titulo}
                       >
                         {subtask.titulo}
