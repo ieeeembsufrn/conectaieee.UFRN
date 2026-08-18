@@ -49,6 +49,7 @@ export const MainPage = () => {
 
   // Identify "Ramo Estudantil" chapter (assumed to be the main one or explicitly named 'Ramo')
   const ramoChapter = chapters.find((c: any) => (c.acronym && c.acronym === 'Ramo') || (c.name && c.name.includes('Ramo')) || c.id === 1);
+  const realChapters = chapters.filter((c: any) => !c.is_not_chapter);
   const mainTasks = tasks.filter((t: any) => !t.parentTaskId);
 
   // Filter goals for Ramo
@@ -189,7 +190,7 @@ export const MainPage = () => {
             <div className="p-2.5 bg-purple-50 text-purple-600 rounded-lg group-hover:bg-purple-600 group-hover:text-white transition-colors">
               <FolderKanban className="w-6 h-6" />
             </div>
-            <span className="text-2xl font-bold text-gray-900">{chapters.length}</span>
+            <span className="text-2xl font-bold text-gray-900">{realChapters.length}</span>
           </div>
           <h3 className="font-semibold text-gray-900">Capítulos</h3>
           <p className="text-xs text-gray-500 mt-1">Veja as unidades organizacionais</p>

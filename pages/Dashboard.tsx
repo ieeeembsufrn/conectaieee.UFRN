@@ -25,6 +25,7 @@ export const Dashboard = () => {
   // Filtrar projetos ativos
   const activeProjects = projects.filter((p: any) => p.status !== 'Arquivado');
   const mainTasks = tasks.filter((t: any) => !t.parentTaskId);
+  const realChapters = chapters.filter((c: any) => !c.is_not_chapter);
 
   // Split Chapters based on User Profile
   const myChapters: any[] = [];
@@ -54,7 +55,7 @@ export const Dashboard = () => {
     projetos: activeProjects.length,
     tarefas: mainTasks.length,
     membros: users.length,
-    capitulos: chapters.length
+    capitulos: realChapters.length
   };
 
   const ChapterCard = ({ cap }: { cap: any }) => {

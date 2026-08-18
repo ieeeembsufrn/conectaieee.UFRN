@@ -413,7 +413,8 @@ USING (
 DROP POLICY IF EXISTS "Only Admin can manage permissions" ON public.permissions;
 CREATE POLICY "Only Admin can manage permissions" ON public.permissions
 FOR ALL TO authenticated
-USING (public.is_admin());
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Everyone can view permissions" ON public.permissions;
 CREATE POLICY "Everyone can view permissions" ON public.permissions
@@ -427,7 +428,10 @@ USING (NOT public.is_external_user());
 
 -- profile_chapter: Admin only edit
 DROP POLICY IF EXISTS "Admin manages profile_chapters" ON public.profile_chapters;
-CREATE POLICY "Admin manages profile_chapters" ON public.profile_chapters FOR ALL TO authenticated USING (public.is_admin());
+CREATE POLICY "Admin manages profile_chapters" ON public.profile_chapters
+FOR ALL TO authenticated
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Everyone views profile_chapters" ON public.profile_chapters;
 CREATE POLICY "Everyone views profile_chapters" ON public.profile_chapters
@@ -573,7 +577,8 @@ USING (
 DROP POLICY IF EXISTS "Admin manages all finances" ON public.finances;
 CREATE POLICY "Admin manages all finances" ON public.finances
 FOR ALL TO authenticated
-USING (public.is_admin());
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
 DROP POLICY IF EXISTS "Chapter Chairs manage own finances" ON public.finances;
 CREATE POLICY "Chapter Chairs manage own finances" ON public.finances
@@ -600,7 +605,8 @@ DROP POLICY IF EXISTS "Admin can manage tools" ON public.tools;
 CREATE POLICY "Admin can manage tools" ON public.tools 
 FOR ALL 
 TO authenticated 
-USING (public.is_admin());
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
 
 -- ====================

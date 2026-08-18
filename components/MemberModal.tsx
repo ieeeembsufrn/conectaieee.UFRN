@@ -222,22 +222,38 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
           .eq('id', profileId);
         if (error) throw error;
 
-        const { error: deleteChaptersError } = await supabase
-          .from('profile_chapters')
-          .delete()
-          .eq('profile_id', profileId);
-        if (deleteChaptersError) throw deleteChaptersError;
-
-        const chapterInserts = chapterAssignments.map(chapter => ({
+        const chapterRows = chapterAssignments.map(chapter => ({
           profile_id: profileId,
           chapter_id: chapter.id,
           role: chapter.role,
           permission_slug: chapter.permission_slug
         }));
 
-        if (chapterInserts.length > 0) {
-          const { error: chapErr } = await supabase.from('profile_chapters').insert(chapterInserts);
+        const { data: existingChapters, error: existingChaptersError } = await supabase
+          .from('profile_chapters')
+          .select('chapter_id')
+          .eq('profile_id', profileId);
+        if (existingChaptersError) throw existingChaptersError;
+
+        if (chapterRows.length > 0) {
+          const { error: chapErr } = await supabase
+            .from('profile_chapters')
+            .upsert(chapterRows, { onConflict: 'profile_id,chapter_id' });
           if (chapErr) throw chapErr;
+        }
+
+        const selectedChapterIds = new Set(chapterAssignments.map(chapter => chapter.id));
+        const removedChapterIds = (existingChapters || [])
+          .map((chapter: any) => chapter.chapter_id)
+          .filter((chapterId: number) => !selectedChapterIds.has(chapterId));
+
+        if (removedChapterIds.length > 0) {
+          const { error: deleteChaptersError } = await supabase
+            .from('profile_chapters')
+            .delete()
+            .eq('profile_id', profileId)
+            .in('chapter_id', removedChapterIds);
+          if (deleteChaptersError) throw deleteChaptersError;
         }
       } else {
         if (chapterAssignments.length === 0) {

@@ -25,6 +25,7 @@ export interface Chapter {
   cover_image_url?: string;
   calendar_url?: string;
   email?: string;
+  is_not_chapter?: boolean;
   keywords?: string[];
   content_url?: string | any;
   members_count: number;

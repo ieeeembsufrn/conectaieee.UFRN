@@ -93,6 +93,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cover_image_url: c.cover_image_url,
         calendar_url: c.calendar_url,
         email: c.email,
+        is_not_chapter: c.is_not_chapter || false,
         keywords: c.keywords || [],
         content_url: c.content_url ? (typeof c.content_url === 'string' ? JSON.parse(c.content_url) : c.content_url) : [],
         members_count: c.members_count,
