@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { X, FolderKanban, Briefcase, Loader2, Save, Users, Check, Palette, Image, ChevronDown, User, Plus, Search, Trash2, Download, FileJson, FileText } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useData } from '../context/DataContext';
@@ -26,7 +26,7 @@ const TW_COLORS = [
 ];
 
 export const NewProjectModal = ({ isOpen, onClose, projectToEdit, initialChapterId, tasks = [] }: NewProjectModalProps) => {
-  const { chapters, users, fetchData } = useData();
+  const { chapters, users, tasks: allTasks, fetchData } = useData();
   const { showAlert } = useGlobalAlert();
 
   const [formData, setFormData] = useState({
@@ -60,6 +60,7 @@ export const NewProjectModal = ({ isOpen, onClose, projectToEdit, initialChapter
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [includeArchivedTasks, setIncludeArchivedTasks] = useState(true);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
   const [chapterSearchQuery, setChapterSearchQuery] = useState('');
@@ -78,6 +79,25 @@ export const NewProjectModal = ({ isOpen, onClose, projectToEdit, initialChapter
   const [showConfirmTeamChange, setShowConfirmTeamChange] = useState(false);
   const initialOwnersRef = useRef<number[]>([]);
   const initialTeamRef = useRef<number[]>([]);
+
+  const projectReportTasks = useMemo(() => {
+    if (!projectToEdit) return tasks;
+
+    const sourceTasks = allTasks.length > 0 ? allTasks : tasks;
+    return sourceTasks
+      .filter((task: any) => String(task.projetoId ?? task.project_id) === String(projectToEdit.id))
+      .sort((a: any, b: any) => {
+        const aParent = Number(a.parentTaskId ?? a.parent_task_id ?? 0) || 0;
+        const bParent = Number(b.parentTaskId ?? b.parent_task_id ?? 0) || 0;
+        if (aParent !== bParent) return aParent - bParent;
+        return (Number(a.id) || 0) - (Number(b.id) || 0);
+      });
+  }, [allTasks, tasks, projectToEdit?.id]);
+
+  const archivedReportTasksCount = projectReportTasks.filter((task: any) => task.status === 'archived').length;
+  const exportTasks = includeArchivedTasks
+    ? projectReportTasks
+    : projectReportTasks.filter((task: any) => task.status !== 'archived');
 
   // Initialize form
   useEffect(() => {
@@ -180,7 +200,7 @@ export const NewProjectModal = ({ isOpen, onClose, projectToEdit, initialChapter
     try {
       const dataToExport = {
         project: projectToEdit,
-        tasks: tasks,
+        tasks: exportTasks,
         metadata: {
           exportedAt: new Date().toISOString(),
           version: '1.0'
@@ -212,7 +232,7 @@ export const NewProjectModal = ({ isOpen, onClose, projectToEdit, initialChapter
     if (!projectToEdit) return;
     setIsExporting(true);
     try {
-      const blob = await pdf(<ProjectReportPDF project={projectToEdit} tasks={tasks} users={users} />).toBlob();
+      const blob = await pdf(<ProjectReportPDF project={projectToEdit} tasks={exportTasks} users={users} />).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -479,7 +499,24 @@ export const NewProjectModal = ({ isOpen, onClose, projectToEdit, initialChapter
                 </button>
 
                 {showExportMenu && (
-                  <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-gray-100 shadow-xl rounded-xl overflow-hidden z-50">
+                  <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-100 shadow-xl rounded-xl overflow-hidden z-50">
+                    <div className="px-3 py-2 border-b border-gray-100 bg-gray-50">
+                      <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={includeArchivedTasks}
+                          onChange={(event) => setIncludeArchivedTasks(event.target.checked)}
+                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span>
+                          <span className="block font-medium">Incluir tarefas arquivadas</span>
+                          <span className="block text-xs text-gray-500">
+                            {exportTasks.length}/{projectReportTasks.length} tarefas no relatório
+                            {archivedReportTasksCount > 0 ? `, ${archivedReportTasksCount} arquivadas` : ''}
+                          </span>
+                        </span>
+                      </label>
+                    </div>
                     <div className="p-1">
                       <button
                         type="button"

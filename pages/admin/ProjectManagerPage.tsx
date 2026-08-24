@@ -29,12 +29,15 @@ import { useData } from '../../context/DataContext';
 import { useAuth } from '../../context/AuthContext';
 import { NewProjectModal } from '../../components/NewProjectModal';
 import { ConfirmationModal } from '../../components/ConfirmationModal';
+import { useGlobalAlert } from '../../components/GlobalAlert';
+import { supabase } from '../../lib/supabase';
 
 // ... (inside component)
 export const ProjectManagerPage = () => {
   const navigate = useNavigate();
   const { projects, tasks, chapters, fetchData } = useData();
   const { profile } = useAuth(); // Import useAuth
+  const { showAlert } = useGlobalAlert();
 
   // Chapter Filter State
   const [selectedChapterId, setSelectedChapterId] = useState<string>('');
@@ -128,14 +131,30 @@ export const ProjectManagerPage = () => {
       showConfirm: true,
       confirmLabel: 'Restaurar',
       confirmAction: async () => {
-        // TODO: Implement restore logic
-        console.log('Restaurar projeto:', project);
-        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        try {
+          const { error } = await supabase
+            .from('projects')
+            .update({ status: 'Planejamento' })
+            .eq('id', project.id);
+
+          if (error) throw error;
+
+          await fetchData(true);
+          showAlert('Projeto Restaurado', `O projeto "${project.nome}" foi restaurado.`, 'success');
+        } catch (error) {
+          console.error('Erro ao restaurar projeto:', error);
+          showAlert('Erro ao Restaurar', 'Não foi possível restaurar o projeto. Verifique suas permissões e tente novamente.', 'error');
+        } finally {
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        }
       }
     });
   };
 
   const handleDeleteRequest = (project: any) => {
+    const projectTasks = tasks.filter((t: any) => t.projetoId === project.id);
+    const activeTasks = projectTasks.filter((t: any) => t.status !== 'archived').length;
+
     setConfirmModal({
       isOpen: true,
       title: 'Arquivar Projeto',
@@ -144,9 +163,28 @@ export const ProjectManagerPage = () => {
       showConfirm: true,
       confirmLabel: 'Arquivar',
       confirmAction: async () => {
-        // TODO: Implement archive logic
-        console.log('Arquivar projeto:', project);
-        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        if (activeTasks > 0) {
+          showAlert('Tarefas Pendentes', 'Arquive todas as tarefas do projeto antes de arquivar o projeto.', 'warning');
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+          return;
+        }
+
+        try {
+          const { error } = await supabase
+            .from('projects')
+            .update({ status: 'Arquivado' })
+            .eq('id', project.id);
+
+          if (error) throw error;
+
+          await fetchData(true);
+          showAlert('Projeto Arquivado', `O projeto "${project.nome}" foi arquivado.`, 'success');
+        } catch (error) {
+          console.error('Erro ao arquivar projeto:', error);
+          showAlert('Erro ao Arquivar', 'Não foi possível arquivar o projeto. Verifique suas permissões e tente novamente.', 'error');
+        } finally {
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        }
       }
     });
   };

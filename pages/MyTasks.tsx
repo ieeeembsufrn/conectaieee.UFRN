@@ -100,8 +100,29 @@ export const MyTasks = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filter only tasks assigned to current user AND NOT ARCHIVED
-  const myTasks = tasks.filter((t: any) => profile?.id && t.responsavelIds?.includes(profile.id) && t.status !== 'archived');
+  const isDoneWithinLastSevenDays = (task: any) => {
+    if (task.status !== 'done') return true;
+    if (!task.prazo) return false;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const sevenDaysAgo = new Date(today);
+    sevenDaysAgo.setDate(today.getDate() - 7);
+
+    const deliveryDate = new Date(task.prazo + 'T12:00:00');
+    deliveryDate.setHours(0, 0, 0, 0);
+
+    return deliveryDate >= sevenDaysAgo && deliveryDate <= today;
+  };
+
+  // Filter only tasks assigned to current user, not archived, and only recent done tasks
+  const myTasks = tasks.filter((t: any) =>
+    profile?.id &&
+    t.responsavelIds?.includes(profile.id) &&
+    t.status !== 'archived' &&
+    isDoneWithinLastSevenDays(t)
+  );
 
   // Calculate statistics
   const stats = {
@@ -185,7 +206,7 @@ export const MyTasks = () => {
     em_breve: { label: 'Em Breve (15 dias)', color: 'text-indigo-600', bg: 'bg-indigo-50', icon: Calendar, tasks: [] as any[] },
     longo_prazo: { label: 'Longo Prazo (+15 dias)', color: 'text-gray-600', bg: 'bg-gray-50', icon: Calendar, tasks: [] as any[] },
     sem_prazo: { label: 'Sem Prazo Definido', color: 'text-gray-500', bg: 'bg-gray-50', icon: Clock, tasks: [] as any[] },
-    concluidas: { label: 'Concluídas Recentemente', color: 'text-green-600', bg: 'bg-green-50', icon: CheckCircle2, tasks: [] as any[] }
+    concluidas: { label: 'Concluídas nos Últimos 7 Dias', color: 'text-green-600', bg: 'bg-green-50', icon: CheckCircle2, tasks: [] as any[] }
   };
 
   // Populate Groups

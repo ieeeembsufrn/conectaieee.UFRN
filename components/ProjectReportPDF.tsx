@@ -1,11 +1,13 @@
 import React from 'react';
-import { Page, Text, View, Document, StyleSheet, Font } from '@react-pdf/renderer';
+import { Page, Text, View, Document, StyleSheet } from '@react-pdf/renderer';
 
 const styles = StyleSheet.create({
     page: {
         flexDirection: 'column',
         backgroundColor: '#FFFFFF',
-        padding: 40,
+        paddingTop: 40,
+        paddingHorizontal: 40,
+        paddingBottom: 58,
         fontFamily: 'Helvetica',
     },
     header: {
@@ -68,7 +70,7 @@ const styles = StyleSheet.create({
         color: '#111827',
     },
     taskContainer: {
-        marginBottom: 20,
+        marginBottom: 14,
         padding: 12,
         backgroundColor: '#F9FAFB',
         borderWidth: 1,
@@ -78,13 +80,15 @@ const styles = StyleSheet.create({
     taskTop: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         marginBottom: 8,
     },
     taskTitle: {
         fontSize: 13,
         fontWeight: 'bold',
         color: '#111827',
+        width: '78%',
+        lineHeight: 1.25,
     },
     statusLabel: {
         fontSize: 8,
@@ -93,6 +97,49 @@ const styles = StyleSheet.create({
         paddingVertical: 2,
         borderRadius: 4,
         textTransform: 'uppercase',
+        maxWidth: '20%',
+        textAlign: 'center',
+    },
+    metaGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        marginBottom: 8,
+    },
+    metaItem: {
+        width: '33.333%',
+        paddingRight: 8,
+        marginBottom: 6,
+    },
+    metaItemFull: {
+        width: '100%',
+        paddingRight: 0,
+        marginBottom: 8,
+    },
+    metaLabel: {
+        fontSize: 8,
+        fontWeight: 'bold',
+        color: '#111827',
+        marginBottom: 2,
+    },
+    metaValue: {
+        fontSize: 10,
+        color: '#374151',
+        lineHeight: 1.35,
+    },
+    descriptionBlock: {
+        marginTop: 2,
+        marginBottom: 8,
+    },
+    descriptionLabel: {
+        fontSize: 9,
+        fontWeight: 'bold',
+        color: '#6B7280',
+        marginBottom: 4,
+    },
+    descriptionText: {
+        fontSize: 10,
+        color: '#374151',
+        lineHeight: 1.45,
     },
     priorityBadge: {
         fontSize: 8,
@@ -148,6 +195,18 @@ export const ProjectReportPDF: React.FC<ProjectReportPDFProps> = ({ project, tas
         if (!task.responsavelIds || !users.length) return 'Ninguém atribuído';
         const assigned = users.filter(u => task.responsavelIds.includes(u.id));
         return assigned.length > 0 ? assigned.map(u => u.nome).join(', ') : 'Ninguém atribuído';
+    };
+
+    const formatMultilineText = (value: any) => {
+        if (!value) return '';
+        return String(value)
+            .replace(/\r\n/g, '\n')
+            .replace(/\t/g, '    ');
+    };
+
+    const formatBreakableText = (value: any) => {
+        return formatMultilineText(value)
+            .replace(/([/?#=&._-])/g, '$1 ');
     };
 
     const getStatusStyles = (status: string) => {
@@ -258,7 +317,7 @@ export const ProjectReportPDF: React.FC<ProjectReportPDFProps> = ({ project, tas
                     {tasks.map((task) => {
                         const resources = parseTaskResources(task);
                         return (
-                            <View key={task.id} style={styles.taskContainer} wrap={false}>
+                            <View key={task.id} style={styles.taskContainer}>
                                 <View style={styles.taskTop}>
                                     <Text style={styles.taskTitle}>{task.titulo}</Text>
                                     <Text style={[styles.statusLabel, getStatusStyles(task.status)]}>
@@ -266,29 +325,31 @@ export const ProjectReportPDF: React.FC<ProjectReportPDFProps> = ({ project, tas
                                     </Text>
                                 </View>
 
-                                <View style={[styles.row, { marginBottom: 6 }]}>
-                                    <View style={{ width: '33%' }}>
-                                        <Text style={styles.text}>
-                                            <Text style={styles.label}>Prioridade: </Text>
-                                            <Text style={[styles.priorityBadge, getPriorityStyles(task.prioridade)]}>
-                                                {" "}{task.prioridade?.toUpperCase()}{" "}
-                                            </Text>
+                                <View style={styles.metaGrid}>
+                                    <View style={styles.metaItem}>
+                                        <Text style={styles.metaLabel}>Prioridade</Text>
+                                        <Text style={[styles.priorityBadge, getPriorityStyles(task.prioridade)]}>
+                                            {" "}{task.prioridade?.toUpperCase() || '-'}{" "}
                                         </Text>
                                     </View>
-                                    <View style={{ width: '33%' }}>
-                                        <Text style={styles.text}><Text style={styles.label}>Início: </Text>{formatDate(task.dataInicio)}</Text>
+                                    <View style={styles.metaItem}>
+                                        <Text style={styles.metaLabel}>Início</Text>
+                                        <Text style={styles.metaValue}>{formatDate(task.dataInicio)}</Text>
                                     </View>
-                                    <View style={{ width: '33%' }}>
-                                        <Text style={styles.text}><Text style={styles.label}>Prazo: </Text>{formatDate(task.prazo)}</Text>
+                                    <View style={styles.metaItem}>
+                                        <Text style={styles.metaLabel}>Prazo</Text>
+                                        <Text style={styles.metaValue}>{formatDate(task.prazo)}</Text>
+                                    </View>
+                                    <View style={styles.metaItemFull}>
+                                        <Text style={styles.metaLabel}>Atribuído a</Text>
+                                        <Text style={styles.metaValue}>{getAssignedUserNames(task)}</Text>
                                     </View>
                                 </View>
 
-                                <Text style={[styles.text, { marginBottom: 6 }]}><Text style={styles.label}>Atribuído a: </Text>{getAssignedUserNames(task)}</Text>
-
                                 {!!task.descricao && (
-                                    <View style={{ marginTop: 4, marginBottom: 8 }}>
-                                        <Text style={[styles.label, { fontSize: 9, color: '#6B7280' }]}>Descrição / Notas:</Text>
-                                        <Text style={styles.text}>{task.descricao}</Text>
+                                    <View style={styles.descriptionBlock}>
+                                        <Text style={styles.descriptionLabel}>Descrição / Notas</Text>
+                                        <Text style={styles.descriptionText}>{formatMultilineText(task.descricao)}</Text>
                                     </View>
                                 )}
 
@@ -305,7 +366,7 @@ export const ProjectReportPDF: React.FC<ProjectReportPDFProps> = ({ project, tas
                                         <Text style={[styles.label, { fontSize: 9, color: '#6B7280' }]}>Anexos e Links:</Text>
                                         {resources.map((res: any, idx: number) => (
                                             <Text key={idx} style={styles.link}>
-                                                • {res.title || 'Recurso'}: {res.value || res.url || res}
+                                                • {formatMultilineText(res.title || 'Recurso')}: {formatBreakableText(res.value || res.url || res)}
                                             </Text>
                                         ))}
                                     </View>
