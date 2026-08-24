@@ -35,5 +35,8 @@ dev-dist/
 # Environment
 .env
 
+# Local database test scripts
+test_users_permissions.sql
+
 # Local agent/skill cache
 .agents/
