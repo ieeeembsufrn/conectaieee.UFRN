@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Menu, LayoutList, Bell, Loader2, LogOut, User } from 'lucide-react';
 import { DataProvider, useData } from './context/DataContext';
@@ -38,10 +38,15 @@ import { VToolsReportPage } from './pages/admin/VToolsReportPage';
 import { FinancialPage } from './pages/admin/FinancialPage';
 import { AvisaIEEEPage } from './pages/admin/AvisaIEEEPage';
 
+const DefaultHomeRoute = () => {
+  return isMobilePwaDevice() ? <Navigate to="/tasks" replace /> : <MainPage />;
+};
+
 const AppLayout = () => {
   const WELCOME_NOTIFICATION_DISMISSED_KEY = 'welcomeNotificationDismissedThisSession';
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const touchStartRef = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
   const navigate = useNavigate();
   const { loading } = useData();
   const { user, profile, signOut } = useAuth();
@@ -116,8 +121,69 @@ const AppLayout = () => {
   const displayRole = profile?.role || 'Membro';
   const displayAvatar = profile?.avatar_initials || displayName[0].toUpperCase();
 
+  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (window.innerWidth >= 1024) return;
+
+    const touch = event.touches[0];
+    touchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      fromEdge: touch.clientX <= 32
+    };
+  };
+
+  const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const touchStart = touchStartRef.current;
+    if (!touchStart || window.innerWidth >= 1024) return;
+
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - touchStart.x;
+    const deltaY = Math.abs(touch.clientY - touchStart.y);
+    const shouldOwnSwipe =
+      (touchStart.fromEdge && deltaX > 12 && deltaY < 48) ||
+      (mobileMenuOpen && deltaX < -12 && deltaY < 48);
+
+    if (shouldOwnSwipe && event.cancelable) {
+      event.preventDefault();
+    }
+  };
+
+  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const touchStart = touchStartRef.current;
+    touchStartRef.current = null;
+
+    if (!touchStart || window.innerWidth >= 1024) return;
+
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - touchStart.x;
+    const deltaY = Math.abs(touch.clientY - touchStart.y);
+    const isHorizontalSwipe = Math.abs(deltaX) >= 70 && deltaY <= 60;
+
+    if (!isHorizontalSwipe) return;
+
+    if (!mobileMenuOpen && touchStart.fromEdge && deltaX > 0) {
+      setMobileMenuOpen(true);
+      return;
+    }
+
+    if (mobileMenuOpen && deltaX < 0) {
+      setMobileMenuOpen(false);
+    }
+  };
+
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <div
+      className="flex h-screen bg-gray-50 overflow-hidden"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      {!mobileMenuOpen && (
+        <div
+          className="fixed inset-y-0 left-0 z-30 w-5 touch-none lg:hidden"
+          aria-hidden="true"
+        />
+      )}
       <Sidebar
         sidebarOpen={sidebarOpen}
         setSidebarOpen={setSidebarOpen}
@@ -204,7 +270,7 @@ const AppLayout = () => {
 
         <main id="app-main-scroll" className="flex-1 overflow-auto p-4 md:p-6">
           <Routes>
-            <Route path="/" element={<MainPage />} />
+            <Route path="/" element={<DefaultHomeRoute />} />
             <Route path="/dashboard" element={<Dashboard />} />
             {/* Rotas Comuns (Membros) */}
             <Route path="/tasks" element={<MyTasks />} />
