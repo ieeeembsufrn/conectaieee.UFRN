@@ -27,42 +27,23 @@ const EVENT_CATEGORIES: Record<string, string[]> = {
 };
 
 const HOST_OUS = [
-   'SBA12381 - Universidade de Brasilia,WIE',
-   'SBC12381 - Universidade de Brasilia,COM19',
-   'SBC12381A - Universidade de Brasilia,RA24',
-   'SBC12381B - Universidade de Brasilia,EMB18',
-   'SBC12381C - Universidade de Brasilia,AES10',
-   'SBC12381D - Universidade de Brasilia,E25',
-   'SBC12381E - Universidade de Brasilia,C16',
-   'SBC12381F - Universidade de Brasilia,PE31',
-   'SBC12381G - Universidade de Brasilia,CS23',
-   'SBC12381H - Universidade de Brasilia,CAS04',
-   'SBC12381I - Universidade de Brasilia,SIT30',
-   'SBC12381J - Universidade de Brasilia,VT06',
-   'SBC12381K - Universidade de Brasilia,CIS11',
-   'SBC12381L - Universidade de Brasilia,MTT17',
-   'SBC12381M - Universidade de Brasilia,SP01',
-   'STB12381 - Universidade de Brasilia'
+	   'SBC03101A - Universidade Federal do Rio de Janeiro,RA24',
+	   'SBC66301A - Universidade Federal do Rio Grande do Norte,C16',
+	   'SBC66301D - Universidade Federal do Rio Grande do Norte,EMB18',
+	   'SBC66301E - Universidade Federal do Rio Grande do Norte,IE13',
+	   'SBC66301 - Universidade Federal do Rio Grande do Norte,PE31',
+	   'SBC66301C - Universidade Federal do Rio Grande do Norte,RA24',
+	   'STB66301 - Universidade Federal do Rio Grande do Norte'
 ];
 
 // Mapeamento Sigla do Capítulo -> Host OU
 const CHAPTER_OU_MAP: Record<string, string> = {
-   'WIE': 'SBA12381 - Universidade de Brasilia,WIE',
-   'ComSoc': 'SBC12381 - Universidade de Brasilia,COM19',
-   'RAS': 'SBC12381A - Universidade de Brasilia,RA24',
-   'EMBS': 'SBC12381B - Universidade de Brasilia,EMB18',
-   'AESS': 'SBC12381C - Universidade de Brasilia,AES10',
-   'EdSoc': 'SBC12381D - Universidade de Brasilia,E25',
-   'CS': 'SBC12381E - Universidade de Brasilia,C16',
-   'PES': 'SBC12381F - Universidade de Brasilia,PE31',
-   'CSS': 'SBC12381G - Universidade de Brasilia,CS23',
-   'CAS': 'SBC12381H - Universidade de Brasilia,CAS04',
-   'SSIT': 'SBC12381I - Universidade de Brasilia,SIT30',
-   'VTS': 'SBC12381J - Universidade de Brasilia,VT06',
-   'CIS': 'SBC12381K - Universidade de Brasilia,CIS11',
-   'MTTS': 'SBC12381L - Universidade de Brasilia,MTT17',
-   'SPS': 'SBC12381M - Universidade de Brasilia,SP01',
-   'Ramo': 'STB12381 - Universidade de Brasilia'
+	   'CS': 'SBC66301A - Universidade Federal do Rio Grande do Norte,C16',
+	   'EMBS': 'SBC66301D - Universidade Federal do Rio Grande do Norte,EMB18',
+	   'IES': 'SBC66301E - Universidade Federal do Rio Grande do Norte,IE13',
+	   'PES': 'SBC66301 - Universidade Federal do Rio Grande do Norte,PE31',
+	   'RAS': 'SBC66301C - Universidade Federal do Rio Grande do Norte,RA24',
+	   'Ramo': 'STB66301 - Universidade Federal do Rio Grande do Norte'
 };
 
 export const VToolsReportModal = ({ isOpen, onClose, eventToReport }: VToolsReportModalProps) => {
@@ -196,7 +177,7 @@ export const VToolsReportModal = ({ isOpen, onClose, eventToReport }: VToolsRepo
                } else {
                   // Fallback para Ramo (STB) se for o capítulo geral do Ramo
                   if (currentChapter.sigla === 'Ramo' || currentChapter.nome.includes('Ramo')) {
-                     initialHostOus = ['STB12381 - Universidade de Brasilia'];
+	                     initialHostOus = ['STB66301 - Universidade Federal do Rio Grande do Norte'];
                   }
                }
             }
