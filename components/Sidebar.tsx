@@ -42,7 +42,7 @@ export const Sidebar = ({ sidebarOpen, setSidebarOpen, mobileMenuOpen, setMobile
               {(sidebarOpen || mobileMenuOpen) && (
                 <div>
                   <h1 className="font-bold text-base md:text-lg">ConectaIEEE</h1>
-                  <p className="text-xs text-blue-200 truncate">Universidade de Brasília</p>
+                  <p className="text-xs text-blue-200 truncate">UFRN - Power By UnB</p>
                 </div>
               )}
             </div>
