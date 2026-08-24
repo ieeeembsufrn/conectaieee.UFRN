@@ -158,9 +158,8 @@ export const useIsPWA = () => {
     const checkIfPWA = () => {
       const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
       const isNavigatorStandalone = (navigator as any).standalone === true;
-      const isWebKit = 'WebkitAppearance' in document.documentElement.style;
 
-      setIsPWA(isStandalone || isNavigatorStandalone || (isWebKit && !isNavigatorStandalone));
+      setIsPWA(isStandalone || isNavigatorStandalone);
     };
 
     checkIfPWA();

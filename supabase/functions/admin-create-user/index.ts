@@ -200,9 +200,7 @@ Deno.serve(async (req) => {
     full_name: fullName,
     role: payload.role || 'Membro',
     avatar_initials: payload.avatar_initials || getInitials(fullName),
-    phone: payload.phone || null,
     matricula: payload.matricula || null,
-    birth_date: payload.birth_date || null,
     membership_number: payload.membership_number || null,
     social_links: payload.social_links || {},
     course: payload.course || null,
@@ -210,14 +208,19 @@ Deno.serve(async (req) => {
     photo_url: payload.photo_url ||
       `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(fullName)}&backgroundColor=00a3ef`,
     ieee_membership_date: payload.ieee_membership_date || null,
-    notes: payload.notes || null,
-    cpf: Array.isArray(payload.cpf) ? payload.cpf : [],
     bio: payload.bio || null,
     cover_config: payload.cover_config || 'from-sky-500 to-slate-700',
     chapters: chapters.map((chapter) => ({
       id: String(chapter.id),
       role: chapter.role
     }))
+  };
+
+  const privateProfilePayload = {
+    phone: payload.phone || null,
+    cpf: Array.isArray(payload.cpf) ? payload.cpf : [],
+    birth_date: payload.birth_date || null,
+    notes: payload.notes || null
   };
 
   const findAuthUserByEmail = async (targetEmail: string) => {
@@ -269,20 +272,30 @@ Deno.serve(async (req) => {
     full_name: fullName,
     role: userMetadata.role,
     avatar_initials: userMetadata.avatar_initials,
-    phone: userMetadata.phone,
     matricula: userMetadata.matricula,
-    birth_date: userMetadata.birth_date,
     membership_number: userMetadata.membership_number,
     social_links: userMetadata.social_links,
     course: userMetadata.course,
     skills: userMetadata.skills,
     photo_url: userMetadata.photo_url,
     ieee_membership_date: userMetadata.ieee_membership_date,
-    notes: userMetadata.notes,
-    cpf: userMetadata.cpf,
     bio: userMetadata.bio,
     cover_config: userMetadata.cover_config
   });
+
+  const upsertPrivateProfileData = async (profileId: number) => {
+    const { error } = await supabaseAdmin
+      .from('profile_private_data')
+      .upsert(
+        {
+          profile_id: profileId,
+          ...privateProfilePayload
+        },
+        { onConflict: 'profile_id' }
+      );
+
+    if (error) throw error;
+  };
 
   const ensureProfile = async (authId: string, allowRepairExistingEmail = false) => {
     for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -367,6 +380,7 @@ Deno.serve(async (req) => {
   }
 
   const profile = await ensureProfile(invitedAuthId, repairedExistingAuth);
+  await upsertPrivateProfileData(profile.id);
 
   const chapterRows = chapters.map((chapter) => ({
     profile_id: profile.id,

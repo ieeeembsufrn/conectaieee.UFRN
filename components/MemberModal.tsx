@@ -23,6 +23,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { useData } from '../context/DataContext';
 import { getAuthRecoveryRedirectUrl } from '../lib/appUrl';
+import { fetchProfilePrivateData, saveProfilePrivateData } from '../lib/profilePrivateData';
 
 interface MemberModalProps {
   isOpen: boolean;
@@ -108,6 +109,8 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
   const { chapters, fetchData } = useData();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSendingRecoveryLink, setIsSendingRecoveryLink] = useState(false);
+  const [isLoadingPrivateData, setIsLoadingPrivateData] = useState(false);
+  const [privateFieldsLoaded, setPrivateFieldsLoaded] = useState(false);
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const ramoChapter = chapters.find((c: any) =>
     c.id === 1 ||
@@ -125,7 +128,12 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
 
   useEffect(() => {
     if (isOpen) {
+      setPrivateFieldsLoaded(!memberToEdit);
+      setIsLoadingPrivateData(false);
+
       if (memberToEdit) {
+        let isCurrentMember = true;
+
         setFormData({
           nome: memberToEdit.nome,
           email: memberToEdit.email,
@@ -136,9 +144,9 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
           chapterPermissions: memberToEdit.profileChapters
             ? memberToEdit.profileChapters.reduce((acc: any, curr: any) => ({ ...acc, [curr.chapter_id]: curr.permission_slug }), {})
             : {},
-          phone: memberToEdit.phone || '',
-          cpf: memberToEdit.cpf?.[0] || '',
-          birthDate: memberToEdit.dataNascimento ? memberToEdit.dataNascimento.split('T')[0] : '',
+          phone: '',
+          cpf: '',
+          birthDate: '',
           membershipNumber: memberToEdit.nroMembresia || memberToEdit.membership_number || '',
           course: memberToEdit.course || '',
           ieeeMembershipDate: memberToEdit.ieee_membership_date || '',
@@ -148,10 +156,38 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
           github: memberToEdit.social?.github || memberToEdit.social_links?.github || '',
           instagram: memberToEdit.social?.instagram || memberToEdit.social_links?.instagram || '',
           skillsText: (memberToEdit.habilidades || memberToEdit.skills || []).join(', '),
-          notes: memberToEdit.notes || '',
+          notes: '',
           bio: memberToEdit.bio || ''
         });
         setShowAdvancedFields(false);
+        setIsLoadingPrivateData(true);
+
+        fetchProfilePrivateData(memberToEdit.id)
+          .then((data) => {
+            if (!isCurrentMember) return;
+
+            setFormData(prev => ({
+              ...prev,
+              phone: data?.phone || '',
+              cpf: data?.cpf?.[0] || '',
+              birthDate: data?.birth_date ? data.birth_date.split('T')[0] : '',
+              notes: data?.notes || ''
+            }));
+            setPrivateFieldsLoaded(true);
+          })
+          .catch((error) => {
+            if (!isCurrentMember) return;
+            console.error('Erro ao carregar dados privados do membro:', error);
+          })
+          .finally(() => {
+            if (isCurrentMember) {
+              setIsLoadingPrivateData(false);
+            }
+          });
+
+        return () => {
+          isCurrentMember = false;
+        };
       } else {
         setFormData(getDefaultFormData());
         setShowAdvancedFields(false);
@@ -174,6 +210,10 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (memberToEdit && !privateFieldsLoaded) {
+      alert('Aguarde o carregamento dos dados privados antes de salvar.');
+      return;
+    }
     setIsSubmitting(true);
 
     const fullName = formData.nome.trim();
@@ -185,14 +225,18 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
       permission_slug: formData.chapterPermissions[cid] || 'member'
     }));
 
+    const privateProfilePayload = {
+      phone: formData.phone.trim() || null,
+      cpf: formData.cpf.trim() ? [formData.cpf.trim()] : [],
+      birth_date: formData.birthDate || null,
+      notes: formData.notes.trim() || null
+    };
+
     const profilePayload: any = {
       full_name: fullName,
       email,
       matricula: formData.matricula.trim(),
       role: formData.role, // Título principal
-      phone: formData.phone.trim() || null,
-      cpf: formData.cpf.trim() ? [formData.cpf.trim()] : [],
-      birth_date: formData.birthDate || null,
       membership_number: formData.membershipNumber.trim() || null,
       course: formData.course.trim() || null,
       ieee_membership_date: formData.ieeeMembershipDate.trim() || null,
@@ -204,7 +248,6 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
         instagram: formData.instagram.trim()
       },
       skills,
-      notes: formData.notes.trim() || null,
       bio: formData.bio.trim() || null,
       // REMOVED: chapter_ids, chapter_roles (Normalized)
       // Se for criação, adicionar iniciais básicas
@@ -221,6 +264,7 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
           .update(profilePayload)
           .eq('id', profileId);
         if (error) throw error;
+        await saveProfilePrivateData(profileId, privateProfilePayload);
 
         const chapterRows = chapterAssignments.map(chapter => ({
           profile_id: profileId,
@@ -282,35 +326,35 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
           throw new Error('Sua sessão não pôde ser validada. Faça login novamente antes de cadastrar um usuário.');
         }
 
-        const { data, error } = await supabase.functions.invoke('admin-create-user', {
-          headers: {
-            Authorization: `Bearer ${accessToken}`
-          },
-          body: {
-            email,
-            full_name: fullName,
-            matricula: formData.matricula.trim(),
-            role: formData.role || 'Membro',
-            avatar_initials: getInitials(fullName),
-            phone: formData.phone.trim() || null,
-            cpf: formData.cpf.trim() ? [formData.cpf.trim()] : [],
-            birth_date: formData.birthDate || null,
-            membership_number: formData.membershipNumber.trim() || null,
-            course: formData.course.trim() || null,
-            ieee_membership_date: formData.ieeeMembershipDate.trim() || null,
-            photo_url: formData.photoUrl.trim() || undefined,
-            cover_config: formData.coverConfig.trim() || undefined,
-            social_links: {
-              linkedin: formData.linkedin.trim(),
-              github: formData.github.trim(),
-              instagram: formData.instagram.trim()
-            },
-            skills,
-            notes: formData.notes.trim() || null,
-            bio: formData.bio.trim() || null,
-            chapters: chapterAssignments
-          }
-        });
+	        const { data, error } = await supabase.functions.invoke('admin-create-user', {
+	          headers: {
+	            Authorization: `Bearer ${accessToken}`
+	          },
+	          body: {
+	            email,
+	            full_name: fullName,
+	            matricula: formData.matricula.trim(),
+	            role: formData.role || 'Membro',
+	            avatar_initials: getInitials(fullName),
+	            phone: privateProfilePayload.phone,
+	            cpf: privateProfilePayload.cpf,
+	            birth_date: privateProfilePayload.birth_date,
+	            membership_number: formData.membershipNumber.trim() || null,
+	            course: formData.course.trim() || null,
+	            ieee_membership_date: formData.ieeeMembershipDate.trim() || null,
+	            photo_url: formData.photoUrl.trim() || undefined,
+	            cover_config: formData.coverConfig.trim() || undefined,
+	            social_links: {
+	              linkedin: formData.linkedin.trim(),
+	              github: formData.github.trim(),
+	              instagram: formData.instagram.trim()
+	            },
+	            skills,
+	            notes: privateProfilePayload.notes,
+	            bio: formData.bio.trim() || null,
+	            chapters: chapterAssignments
+	          }
+	        });
 
         if (error) {
           throw new Error(await getFunctionErrorMessage(error));
@@ -318,6 +362,10 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
 
         if (data?.error) {
           throw new Error(data.error);
+        }
+
+        if (data?.user?.profile_id) {
+          await saveProfilePrivateData(data.user.profile_id, privateProfilePayload);
         }
       }
 
@@ -648,6 +696,12 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
 
             {showAdvancedFields && (
               <div className="px-4 pb-4 pt-1 border-t border-gray-100 space-y-4">
+                {isLoadingPrivateData && (
+                  <div className="flex items-center gap-2 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Carregando dados privados...
+                  </div>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Telefone</label>
@@ -847,11 +901,11 @@ export const MemberModal = ({ isOpen, onClose, memberToEdit }: MemberModalProps)
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isLoadingPrivateData || (memberToEdit && !privateFieldsLoaded)}
               className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all flex items-center gap-2"
             >
-              {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              {memberToEdit ? 'Salvar Alterações' : 'Cadastrar e enviar convite'}
+              {(isSubmitting || isLoadingPrivateData) ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {isLoadingPrivateData ? 'Carregando...' : memberToEdit ? 'Salvar Alterações' : 'Cadastrar e enviar convite'}
             </button>
           </div>
         </form>

@@ -27,6 +27,7 @@ import { LoginPage } from './pages/LoginPage';
 import { UpdatePasswordPage } from './pages/UpdatePasswordPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { isExternalOnlyProfile } from './lib/access';
+import { getCurrentNotificationTokenRecord, isMobilePwaDevice } from './lib/notificationTokens';
 
 // Admin Pages
 import { AdminPage } from './pages/AdminPage';
@@ -35,8 +36,10 @@ import { ChapterChairPage } from './pages/admin/ChapterChairPage';
 import { PresidentPage } from './pages/admin/PresidentPage';
 import { VToolsReportPage } from './pages/admin/VToolsReportPage';
 import { FinancialPage } from './pages/admin/FinancialPage';
+import { AvisaIEEEPage } from './pages/admin/AvisaIEEEPage';
 
 const AppLayout = () => {
+  const WELCOME_NOTIFICATION_DISMISSED_KEY = 'welcomeNotificationDismissedThisSession';
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
@@ -47,25 +50,41 @@ const AppLayout = () => {
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
 
   useEffect(() => {
-    // Check if we should show the welcome modal
-    if (profile && !loading) {
-      // 1. User has no FCM token saved
-      // 2. Permission is 'default' (browser hasn't asked yet)
-      if (!profile.fcm_token && typeof Notification !== 'undefined' && Notification.permission === 'default') {
-        // Only show on mobile devices AND if installed as PWA (standalone)
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        const isPWA = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
+    if (!profile || loading) return;
+    if (typeof Notification === 'undefined' || Notification.permission === 'denied') return;
 
-        if (isMobile && isPWA) {
-          const hasSeen = localStorage.getItem('hasSeenWelcomeModal');
-          if (!hasSeen) {
-            // Delay slightly for better UX
-            setTimeout(() => setShowWelcomeModal(true), 2000);
-          }
-        }
+    let isActive = true;
+    let modalTimer: number | undefined;
+
+    if (!isMobilePwaDevice()) return;
+
+    const shouldPromptForNotifications = async () => {
+      if (sessionStorage.getItem(WELCOME_NOTIFICATION_DISMISSED_KEY)) return;
+
+      if (Notification.permission === 'default') {
+        modalTimer = window.setTimeout(() => setShowWelcomeModal(true), 2000);
+        return;
       }
-    }
-  }, [profile, loading]);
+
+      try {
+        const tokenRecord = await getCurrentNotificationTokenRecord(profile.id);
+        if (isActive && (!tokenRecord || !tokenRecord.enabled)) {
+          modalTimer = window.setTimeout(() => setShowWelcomeModal(true), 2000);
+        }
+      } catch (error) {
+        console.error('Erro ao verificar token de notificação do dispositivo:', error);
+      }
+    };
+
+    shouldPromptForNotifications();
+
+    return () => {
+      isActive = false;
+      if (modalTimer) {
+        window.clearTimeout(modalTimer);
+      }
+    };
+  }, [profile?.id, loading]);
 
   useEffect(() => {
     const unsubscribe = setupOnMessage((payload: any) => {
@@ -214,9 +233,10 @@ const AppLayout = () => {
             </Route>
 
             {/* 3. Rotas Exclusivas da Presidência Global (Apenas Admin) */}
-            <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
-              <Route path="/admin/president" element={<PresidentPage />} />
-            </Route>
+	            <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+	              <Route path="/admin/president" element={<PresidentPage />} />
+	              <Route path="/admin/avisaieee" element={<AvisaIEEEPage />} />
+	            </Route>
           </Routes>
         </main>
       </div>
@@ -228,7 +248,7 @@ const AppLayout = () => {
         isOpen={showWelcomeModal}
         onClose={() => {
           setShowWelcomeModal(false);
-          localStorage.setItem('hasSeenWelcomeModal', 'true');
+          sessionStorage.setItem(WELCOME_NOTIFICATION_DISMISSED_KEY, 'true');
         }}
       />
     </div >

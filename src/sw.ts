@@ -1,7 +1,7 @@
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching';
 import { clientsClaim } from 'workbox-core';
 import { registerRoute } from 'workbox-routing';
-import { NetworkFirst, CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
+import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { initializeApp } from 'firebase/app';
 import { getMessaging, onBackgroundMessage } from 'firebase/messaging/sw';
@@ -9,34 +9,37 @@ import { firebaseConfig } from '../lib/firebase_constants';
 
 declare let self: ServiceWorkerGlobalScope;
 
-// Initialize Firebase in Service Worker
-const app = initializeApp(firebaseConfig);
-const messaging = getMessaging(app);
+try {
+    const app = initializeApp(firebaseConfig);
+    const messaging = getMessaging(app);
 
-onBackgroundMessage(messaging, (payload) => {
-    console.log('[sw.ts] Received background message ', payload);
+    onBackgroundMessage(messaging, (payload) => {
+        console.log('[sw.ts] Received background message ', payload);
 
-    // Se o payload já tiver um objeto 'notification', o Firebase Web SDK 
-    // no Android/Chrome já exibe a notificação automaticamente. 
-    // Chamar showNotification() aqui causaria uma notificação duplicada.
-    if (payload.notification) {
-        return;
-    }
+        // Se o payload já tiver um objeto 'notification', o Firebase Web SDK
+        // no Android/Chrome já exibe a notificação automaticamente.
+        // Chamar showNotification() aqui causaria uma notificação duplicada.
+        if (payload.notification) {
+            return;
+        }
 
-    // Para mensagens apenas de dados (Data-only), exibimos manualmente.
-    // Usamos um 'tag' para garantir que mensagens repetidas não dupliquem.
-    const notificationTitle = payload.data?.title || 'Conecta IEEE';
-    const notificationOptions = {
-        body: payload.data?.body || 'Você tem uma nova mensagem.',
-        icon: '/assets/android-launchericon-192-192.png',
-        badge: '/assets/android-launchericon-192-192.png',
-        data: payload.data,
-        tag: 'conecta-ieee-notif',
-        renotify: true
-    };
+        // Para mensagens apenas de dados (Data-only), exibimos manualmente.
+        // Usamos um 'tag' para garantir que mensagens repetidas não dupliquem.
+        const notificationTitle = payload.data?.title || 'Conecta IEEE';
+        const notificationOptions = {
+            body: payload.data?.body || 'Você tem uma nova mensagem.',
+            icon: '/assets/android-launchericon-192-192.png',
+            badge: '/assets/android-launchericon-192-192.png',
+            data: payload.data,
+            tag: 'conecta-ieee-notif',
+            renotify: true
+        };
 
-    return (self as any).registration.showNotification(notificationTitle, notificationOptions);
-});
+        return (self as any).registration.showNotification(notificationTitle, notificationOptions);
+    });
+} catch (error) {
+    console.warn('[sw.ts] Firebase Messaging indisponível no service worker:', error);
+}
 
 // Listener para abrir o app ao clicar na notificação
 (self as any).addEventListener('notificationclick', (event: any) => {
@@ -64,22 +67,12 @@ cleanupOutdatedCaches();
 (self as any).skipWaiting();
 clientsClaim();
 
+(self as any).addEventListener('activate', (event: ExtendableEvent) => {
+    event.waitUntil(caches.delete('supabase-api'));
+});
+
 // Precache resources registered by VitePWA
 precacheAndRoute(self.__WB_MANIFEST);
-
-// Cache Supabase API
-registerRoute(
-    ({ url }) => url.hostname.includes('supabase.co'),
-    new NetworkFirst({
-        cacheName: 'supabase-api',
-        plugins: [
-            new ExpirationPlugin({
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24 * 7 // 7 days
-            })
-        ]
-    })
-);
 
 // Cache Images
 registerRoute(

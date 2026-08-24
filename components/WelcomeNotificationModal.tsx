@@ -80,6 +80,14 @@ export const WelcomeNotificationModal: React.FC<WelcomeNotificationModalProps> =
                             )}
                         </button>
 
+                        <button
+                            onClick={onClose}
+                            disabled={loading}
+                            className="w-full py-2 px-4 text-gray-500 hover:text-gray-700 hover:bg-gray-50 font-medium rounded-xl transition-colors disabled:opacity-50"
+                        >
+                            Agora não
+                        </button>
+
                     </div>
 
                     <p className="text-xs text-gray-400 mt-4">

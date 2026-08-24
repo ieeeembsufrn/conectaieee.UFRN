@@ -6,8 +6,10 @@ ALTER TABLE public.chapter_goals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chapters ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.classifieds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notification_tokens ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.permissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profile_chapters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profile_private_data ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.project_chapters ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.project_members ENABLE ROW LEVEL SECURITY;
@@ -462,6 +464,213 @@ USING (
   public.is_admin()
 );
 
+-- profile_private_data: sensitive data, visible only to self or global admin.
+CREATE OR REPLACE FUNCTION public.set_profile_private_data_updated_at()
+RETURNS trigger AS $$
+BEGIN
+  NEW.updated_at = timezone('utc'::text, now());
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS set_profile_private_data_updated_at ON public.profile_private_data;
+CREATE TRIGGER set_profile_private_data_updated_at
+BEFORE UPDATE ON public.profile_private_data
+FOR EACH ROW
+EXECUTE FUNCTION public.set_profile_private_data_updated_at();
+
+DROP POLICY IF EXISTS "Users and admins view private profile data" ON public.profile_private_data;
+CREATE POLICY "Users and admins view private profile data"
+ON public.profile_private_data
+FOR SELECT TO authenticated
+USING (
+  profile_id = public.get_auth_profile_id()
+  OR public.is_admin()
+);
+
+DROP POLICY IF EXISTS "Users and admins insert private profile data" ON public.profile_private_data;
+CREATE POLICY "Users and admins insert private profile data"
+ON public.profile_private_data
+FOR INSERT TO authenticated
+WITH CHECK (
+  profile_id = public.get_auth_profile_id()
+  OR public.is_admin()
+);
+
+DROP POLICY IF EXISTS "Users and admins update private profile data" ON public.profile_private_data;
+CREATE POLICY "Users and admins update private profile data"
+ON public.profile_private_data
+FOR UPDATE TO authenticated
+USING (
+  profile_id = public.get_auth_profile_id()
+  OR public.is_admin()
+)
+WITH CHECK (
+  profile_id = public.get_auth_profile_id()
+  OR public.is_admin()
+);
+
+DROP POLICY IF EXISTS "Admins delete private profile data" ON public.profile_private_data;
+CREATE POLICY "Admins delete private profile data"
+ON public.profile_private_data
+FOR DELETE TO authenticated
+USING (public.is_admin());
+
+-- notification_tokens: one row per device/browser token.
+CREATE OR REPLACE FUNCTION public.set_notification_tokens_updated_at()
+RETURNS trigger AS $$
+BEGIN
+  NEW.updated_at = timezone('utc'::text, now());
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS set_notification_tokens_updated_at ON public.notification_tokens;
+CREATE TRIGGER set_notification_tokens_updated_at
+BEFORE UPDATE ON public.notification_tokens
+FOR EACH ROW
+EXECUTE FUNCTION public.set_notification_tokens_updated_at();
+
+CREATE INDEX IF NOT EXISTS idx_notification_tokens_active_profile_id
+ON public.notification_tokens(profile_id)
+WHERE enabled = true;
+CREATE INDEX IF NOT EXISTS idx_notification_tokens_active_platform
+ON public.notification_tokens(platform)
+WHERE enabled = true;
+
+CREATE OR REPLACE FUNCTION public.upsert_own_notification_token(
+  token_value text,
+  platform_value text DEFAULT NULL,
+  user_agent_value text DEFAULT NULL,
+  enabled_value boolean DEFAULT true,
+  notify_due_tasks_value boolean DEFAULT true,
+  notify_overdue_tasks_value boolean DEFAULT true,
+  notify_chapter_events_value boolean DEFAULT true,
+  notify_new_assignments_value boolean DEFAULT true
+)
+RETURNS public.notification_tokens
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  auth_profile_id bigint;
+  saved_token public.notification_tokens;
+BEGIN
+  auth_profile_id := public.get_auth_profile_id();
+
+  IF auth_profile_id IS NULL THEN
+    RAISE EXCEPTION 'Authenticated profile not found.';
+  END IF;
+
+  IF token_value IS NULL OR btrim(token_value) = '' THEN
+    RAISE EXCEPTION 'Notification token is required.';
+  END IF;
+
+  INSERT INTO public.notification_tokens (
+    profile_id,
+    token,
+    platform,
+    user_agent,
+    enabled,
+    notify_due_tasks,
+    notify_overdue_tasks,
+    notify_chapter_events,
+    notify_new_assignments,
+    last_seen_at
+  )
+  VALUES (
+    auth_profile_id,
+    token_value,
+    platform_value,
+    user_agent_value,
+    enabled_value,
+    notify_due_tasks_value,
+    notify_overdue_tasks_value,
+    notify_chapter_events_value,
+    notify_new_assignments_value,
+    timezone('utc'::text, now())
+  )
+  ON CONFLICT (token) DO UPDATE SET
+    profile_id = EXCLUDED.profile_id,
+    platform = EXCLUDED.platform,
+    user_agent = EXCLUDED.user_agent,
+    enabled = EXCLUDED.enabled,
+    notify_due_tasks = EXCLUDED.notify_due_tasks,
+    notify_overdue_tasks = EXCLUDED.notify_overdue_tasks,
+    notify_chapter_events = EXCLUDED.notify_chapter_events,
+    notify_new_assignments = EXCLUDED.notify_new_assignments,
+    last_seen_at = timezone('utc'::text, now())
+  RETURNING * INTO saved_token;
+
+  RETURN saved_token;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.upsert_own_notification_token(
+  text,
+  text,
+  text,
+  boolean,
+  boolean,
+  boolean,
+  boolean,
+  boolean
+) FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION public.upsert_own_notification_token(
+  text,
+  text,
+  text,
+  boolean,
+  boolean,
+  boolean,
+  boolean,
+  boolean
+) TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+DROP POLICY IF EXISTS "Users and admins view notification tokens" ON public.notification_tokens;
+CREATE POLICY "Users and admins view notification tokens"
+ON public.notification_tokens
+FOR SELECT TO authenticated
+USING (
+  profile_id = public.get_auth_profile_id()
+  OR public.is_admin()
+);
+
+DROP POLICY IF EXISTS "Users and admins insert notification tokens" ON public.notification_tokens;
+CREATE POLICY "Users and admins insert notification tokens"
+ON public.notification_tokens
+FOR INSERT TO authenticated
+WITH CHECK (
+  profile_id = public.get_auth_profile_id()
+  OR public.is_admin()
+);
+
+DROP POLICY IF EXISTS "Users and admins update notification tokens" ON public.notification_tokens;
+CREATE POLICY "Users and admins update notification tokens"
+ON public.notification_tokens
+FOR UPDATE TO authenticated
+USING (
+  profile_id = public.get_auth_profile_id()
+  OR public.is_admin()
+)
+WITH CHECK (
+  profile_id = public.get_auth_profile_id()
+  OR public.is_admin()
+);
+
+DROP POLICY IF EXISTS "Users and admins delete notification tokens" ON public.notification_tokens;
+CREATE POLICY "Users and admins delete notification tokens"
+ON public.notification_tokens
+FOR DELETE TO authenticated
+USING (
+  profile_id = public.get_auth_profile_id()
+  OR public.is_admin()
+);
+
 -- ====================
 -- 7. PROJECT DATA (projects, project_chapters, project_members)
 -- ====================
@@ -617,25 +826,20 @@ RETURNS trigger AS $$
 DECLARE
   _profile_id bigint;
 BEGIN
-  -- 1. Cria o Perfil
-  INSERT INTO public.profiles (
-    auth_id, email, full_name, role, avatar_initials, phone, matricula, birth_date, membership_number, social_links, course, skills, photo_url, ieee_membership_date, notes, cpf, bio, cover_config
-  )
-  VALUES (
-    new.id,
+	  -- 1. Cria o Perfil
+	  INSERT INTO public.profiles (
+	    auth_id, email, full_name, role, avatar_initials, matricula, membership_number, social_links, course, skills, photo_url, ieee_membership_date, bio, cover_config
+	  )
+	  VALUES (
+	    new.id,
     new.email,
-    COALESCE(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
-    new.raw_user_meta_data->>'role',
-    new.raw_user_meta_data->>'avatar_initials',
-    new.raw_user_meta_data->>'phone',
-    new.raw_user_meta_data->>'matricula',
-    CASE 
-      WHEN new.raw_user_meta_data->>'birth_date' IS NULL OR new.raw_user_meta_data->>'birth_date' = '' THEN NULL 
-      ELSE (new.raw_user_meta_data->>'birth_date')::date 
-    END,
-    new.raw_user_meta_data->>'membership_number',
-    CASE 
-      WHEN jsonb_typeof(new.raw_user_meta_data->'social_links') = 'object' THEN new.raw_user_meta_data->'social_links'
+	    COALESCE(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)),
+	    new.raw_user_meta_data->>'role',
+	    new.raw_user_meta_data->>'avatar_initials',
+	    new.raw_user_meta_data->>'matricula',
+	    new.raw_user_meta_data->>'membership_number',
+	    CASE 
+	      WHEN jsonb_typeof(new.raw_user_meta_data->'social_links') = 'object' THEN new.raw_user_meta_data->'social_links'
       ELSE '{}'::jsonb
     END,
     new.raw_user_meta_data->>'course',
@@ -643,21 +847,39 @@ BEGIN
       WHEN jsonb_typeof(new.raw_user_meta_data->'skills') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(new.raw_user_meta_data->'skills'))
       WHEN new.raw_user_meta_data->>'skills' IS NOT NULL AND new.raw_user_meta_data->>'skills' != '' THEN ARRAY[new.raw_user_meta_data->>'skills']
       ELSE '{}'::text[]
-    END, 
-    new.raw_user_meta_data->>'photo_url',
-    new.raw_user_meta_data->>'ieee_membership_date',
-    new.raw_user_meta_data->>'notes',
-    CASE 
-      WHEN jsonb_typeof(new.raw_user_meta_data->'cpf') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(new.raw_user_meta_data->'cpf'))
-      WHEN new.raw_user_meta_data->>'cpf' IS NOT NULL AND new.raw_user_meta_data->>'cpf' != '' THEN ARRAY[new.raw_user_meta_data->>'cpf']
-      ELSE '{}'::text[]
-    END,
-    new.raw_user_meta_data->>'bio',
-    new.raw_user_meta_data->>'cover_config'
-  )
-  RETURNING id INTO _profile_id;
+	    END, 
+	    new.raw_user_meta_data->>'photo_url',
+	    new.raw_user_meta_data->>'ieee_membership_date',
+	    new.raw_user_meta_data->>'bio',
+	    new.raw_user_meta_data->>'cover_config'
+	  )
+	  RETURNING id INTO _profile_id;
 
-  -- 2. Cria o Vínculo com os Capítulos
+	  -- 2. Cria linha privada vazia para o Perfil
+	  INSERT INTO public.profile_private_data (
+	    profile_id,
+	    phone,
+	    cpf,
+	    birth_date,
+	    notes
+	  )
+	  VALUES (
+	    _profile_id,
+	    new.raw_user_meta_data->>'phone',
+	    CASE
+	      WHEN jsonb_typeof(new.raw_user_meta_data->'cpf') = 'array' THEN ARRAY(SELECT jsonb_array_elements_text(new.raw_user_meta_data->'cpf'))
+	      WHEN new.raw_user_meta_data->>'cpf' IS NOT NULL AND new.raw_user_meta_data->>'cpf' != '' THEN ARRAY[new.raw_user_meta_data->>'cpf']
+	      ELSE '{}'::text[]
+	    END,
+	    CASE
+	      WHEN new.raw_user_meta_data->>'birth_date' IS NULL OR new.raw_user_meta_data->>'birth_date' = '' THEN NULL
+	      ELSE (new.raw_user_meta_data->>'birth_date')::date
+	    END,
+	    new.raw_user_meta_data->>'notes'
+	  )
+	  ON CONFLICT (profile_id) DO NOTHING;
+	
+	  -- 3. Cria o Vínculo com os Capítulos
   IF jsonb_typeof(new.raw_user_meta_data->'chapters') = 'array' AND jsonb_array_length(new.raw_user_meta_data->'chapters') > 0 THEN
     INSERT INTO public.profile_chapters (profile_id, chapter_id, role, permission_slug)
     SELECT 

@@ -29,6 +29,13 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { requestNotificationPermission } from '../lib/notifications';
+import { fetchProfilePrivateData, saveProfilePrivateData } from '../lib/profilePrivateData';
+import {
+   DEFAULT_NOTIFICATION_PREFERENCES,
+   getCurrentNotificationTokenRecord,
+   NotificationPreferences,
+   updateCurrentNotificationPreferences
+} from '../lib/notificationTokens';
 import { Bell } from 'lucide-react';
 
 // Lista de cores do Tailwind para o seletor
@@ -138,6 +145,8 @@ export const Settings = () => {
    const { profile, refreshProfile } = useAuth();
    const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
    const [loading, setLoading] = useState(false);
+   const [privateFieldsLoading, setPrivateFieldsLoading] = useState(false);
+   const [privateFieldsLoaded, setPrivateFieldsLoaded] = useState(false);
    const [avatarUploading, setAvatarUploading] = useState(false);
    const [avatarError, setAvatarError] = useState('');
    const [successMsg, setSuccessMsg] = useState('');
@@ -148,11 +157,17 @@ export const Settings = () => {
       from: 'blue',
       to: 'indigo'
    });
-   const pickerRef = useRef<HTMLDivElement>(null);
-   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
-   const [permissionStatus, setPermissionStatus] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'denied');
+	   const pickerRef = useRef<HTMLDivElement>(null);
+	   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+	   const [permissionStatus, setPermissionStatus] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'denied');
+	   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES);
+	   const [notificationTokenActive, setNotificationTokenActive] = useState(false);
+	   const [notificationError, setNotificationError] = useState('');
+	   const [notificationSettingsLoading, setNotificationSettingsLoading] = useState(false);
+	   const [notificationSettingsSaving, setNotificationSettingsSaving] = useState(false);
 
-   const isAdmin = ((profile as any).profile_chapters || (profile as any).profileChapters || []).some((pc: any) => pc.chapter_id === 1 && pc.permission_slug === 'admin');
+	   const isAdmin = ((profile as any).profile_chapters || (profile as any).profileChapters || []).some((pc: any) => pc.chapter_id === 1 && pc.permission_slug === 'admin');
+	   const isEditingOwnProfile = !!profile && selectedUserId === profile.id;
 
    // Markdown Preview State
    const [showBioPreview, setShowBioPreview] = useState(false);
@@ -198,11 +213,14 @@ export const Settings = () => {
       if (selectedUserId) {
          const user = users.find((u: any) => u.id === Number(selectedUserId));
          if (user) {
+            let isCurrentSelection = true;
+
+            setPrivateFieldsLoaded(false);
             setFormData({
                email: user.email || '',
                matricula: user.matricula === 'N/D' ? '' : (user.matricula || ''),
                nroMembresia: user.nroMembresia || '',
-               dataNascimento: user.dataNascimento ? user.dataNascimento.split('T')[0] : '',
+               dataNascimento: '',
                foto: user.foto || '',
                coverConfig: user.coverConfig || '',
                bio: user.bio || '',
@@ -212,17 +230,103 @@ export const Settings = () => {
                   instagram: user.social?.instagram || ''
                },
                habilidades: user.habilidades || [],
-               phone: user.phone || '',
-               cpf: (user.cpf && user.cpf.length > 0) ? user.cpf[0] : '',
+               phone: '',
+               cpf: '',
                ieeeMembershipDate: user.ieee_membership_date || '',
                course: user.course || ''
             });
+
+            setPrivateFieldsLoading(true);
+            fetchProfilePrivateData(selectedUserId)
+               .then((data) => {
+                  if (!isCurrentSelection) return;
+
+                  setFormData(prev => ({
+                     ...prev,
+                     phone: data?.phone || '',
+                     cpf: data?.cpf?.[0] || '',
+                     dataNascimento: data?.birth_date ? data.birth_date.split('T')[0] : ''
+                  }));
+                  setPrivateFieldsLoaded(true);
+               })
+               .catch((error) => {
+                  if (!isCurrentSelection) return;
+                  console.error('Erro ao carregar dados privados do perfil:', error);
+               })
+               .finally(() => {
+                  if (isCurrentSelection) {
+                     setPrivateFieldsLoading(false);
+                  }
+               });
+
+            return () => {
+               isCurrentSelection = false;
+            };
          }
       }
-   }, [selectedUserId, users]);
+	   }, [selectedUserId, users]);
 
-   // Click outside listener for picker
    useEffect(() => {
+      if (!profile || selectedUserId !== profile.id) {
+         setNotificationTokenActive(false);
+         setNotificationError('');
+         setNotificationPreferences(DEFAULT_NOTIFICATION_PREFERENCES);
+         return;
+      }
+
+      if (typeof Notification === 'undefined') {
+         setPermissionStatus('denied');
+         setNotificationTokenActive(false);
+         setNotificationError('');
+         return;
+      }
+
+      setPermissionStatus(Notification.permission);
+
+      if (Notification.permission !== 'granted') {
+         setNotificationTokenActive(false);
+         setNotificationError('');
+         setNotificationPreferences(DEFAULT_NOTIFICATION_PREFERENCES);
+         return;
+      }
+
+      let isCurrentProfile = true;
+      setNotificationSettingsLoading(true);
+
+      getCurrentNotificationTokenRecord(profile.id)
+         .then((record) => {
+            if (!isCurrentProfile) return;
+
+            if (record) {
+               setNotificationTokenActive(record.enabled);
+               setNotificationPreferences({
+                  notify_due_tasks: record.notify_due_tasks,
+                  notify_overdue_tasks: record.notify_overdue_tasks,
+                  notify_chapter_events: record.notify_chapter_events,
+                  notify_new_assignments: record.notify_new_assignments
+               });
+            } else {
+               setNotificationTokenActive(false);
+               setNotificationPreferences(DEFAULT_NOTIFICATION_PREFERENCES);
+            }
+         })
+         .catch((error) => {
+            if (!isCurrentProfile) return;
+            console.error('Erro ao carregar preferências de notificação:', error);
+         })
+         .finally(() => {
+            if (isCurrentProfile) {
+               setNotificationSettingsLoading(false);
+            }
+         });
+
+      return () => {
+         isCurrentProfile = false;
+      };
+   }, [selectedUserId, profile?.id]);
+
+	   // Click outside listener for picker
+	   useEffect(() => {
       const handleClickOutside = (event: MouseEvent) => {
          if (pickerRef.current && !pickerRef.current.contains(event.target as Node)) {
             setShowGradientPicker(false);
@@ -238,43 +342,102 @@ export const Settings = () => {
    const handleSave = async (e: React.FormEvent) => {
       e.preventDefault();
       if (!selectedUserId) return;
+      if (!privateFieldsLoaded) {
+         alert('Aguarde o carregamento dos dados privados antes de salvar.');
+         return;
+      }
       setLoading(true);
       setSuccessMsg('');
 
-      try {
-         const { error } = await supabase
-            .from('profiles')
-            .update({
-               email: formData.email,
-               matricula: formData.matricula,
-               membership_number: formData.nroMembresia,
-               birth_date: formData.dataNascimento || null,
-               photo_url: formData.foto,
-               cover_config: formData.coverConfig,
-               bio: formData.bio,
-               skills: formData.habilidades,
-               social_links: formData.social,
-               phone: formData.phone,
-               cpf: formData.cpf ? [formData.cpf] : [],
-               ieee_membership_date: formData.ieeeMembershipDate,
-               course: formData.course
-            })
-            .eq('id', selectedUserId);
+	      try {
+	         const { error } = await supabase
+	            .from('profiles')
+	            .update({
+	               email: formData.email,
+	               matricula: formData.matricula,
+	               membership_number: formData.nroMembresia,
+	               photo_url: formData.foto,
+	               cover_config: formData.coverConfig,
+	               bio: formData.bio,
+	               skills: formData.habilidades,
+	               social_links: formData.social,
+	               ieee_membership_date: formData.ieeeMembershipDate,
+	               course: formData.course
+	            })
+	            .eq('id', selectedUserId);
 
-         if (error) throw error;
+	         if (error) throw error;
 
-         await fetchData(true);
-         setSuccessMsg('Perfil atualizado com sucesso!');
+	         await saveProfilePrivateData(selectedUserId, {
+	            phone: formData.phone,
+	            cpf: formData.cpf ? [formData.cpf] : [],
+	            birth_date: formData.dataNascimento || null
+	         });
+
+	         await fetchData(true);
+	         setSuccessMsg('Perfil atualizado com sucesso!');
          setTimeout(() => setSuccessMsg(''), 3000);
       } catch (err) {
          console.error('Erro ao salvar perfil:', err);
          alert('Erro ao salvar perfil.');
       } finally {
          setLoading(false);
+	      }
+	   };
+
+   const handleEnableNotifications = async () => {
+      if (!profile || !isEditingOwnProfile) return;
+
+      setNotificationSettingsSaving(true);
+      setNotificationError('');
+      try {
+         const token = await requestNotificationPermission(profile.id, notificationPreferences);
+         if (typeof Notification !== 'undefined') {
+            setPermissionStatus(Notification.permission);
+         }
+
+         if (token) {
+            setNotificationTokenActive(true);
+            setSuccessMsg('Notificações ativadas neste dispositivo!');
+            setTimeout(() => setSuccessMsg(''), 3000);
+         } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            setNotificationError('Permissão concedida, mas o token não foi gerado. Verifique a chave VAPID do Firebase e o Service Worker.');
+         }
+      } catch (e) {
+         console.error(e);
+         setNotificationError(e instanceof Error ? e.message : 'Erro ao ativar notificações.');
+      } finally {
+         setNotificationSettingsSaving(false);
       }
    };
 
-   const handleAddSkill = () => {
+   const handleNotificationPreferenceChange = async (
+      key: keyof NotificationPreferences,
+      checked: boolean
+   ) => {
+      const nextPreferences = {
+         ...notificationPreferences,
+         [key]: checked
+      };
+
+      setNotificationPreferences(nextPreferences);
+
+      if (!profile || !isEditingOwnProfile || permissionStatus !== 'granted' || !notificationTokenActive) {
+         return;
+      }
+
+      setNotificationSettingsSaving(true);
+      try {
+         await updateCurrentNotificationPreferences(profile.id, nextPreferences);
+      } catch (error) {
+         console.error('Erro ao salvar preferências de notificação:', error);
+         alert('Erro ao salvar preferências de notificação.');
+      } finally {
+         setNotificationSettingsSaving(false);
+      }
+   };
+	
+	   const handleAddSkill = () => {
       if (newSkill.trim() && !formData.habilidades.includes(newSkill.trim())) {
          setFormData(prev => ({
             ...prev,
@@ -380,15 +543,42 @@ export const Settings = () => {
       }
    };
 
-   const applyGradient = () => {
-      // Gera a string no formato que o app já espera: "from-COLOR-600 to-COLOR-800"
-      // Usamos tons fixos (600 e 800) para garantir bom contraste e estética
-      const config = `from-${gradientState.from}-600 to-${gradientState.to}-800`;
-      setFormData(prev => ({ ...prev, coverConfig: config }));
-      setShowGradientPicker(false);
-   };
+	   const applyGradient = () => {
+	      // Gera a string no formato que o app já espera: "from-COLOR-600 to-COLOR-800"
+	      // Usamos tons fixos (600 e 800) para garantir bom contraste e estética
+	      const config = `from-${gradientState.from}-600 to-${gradientState.to}-800`;
+	      setFormData(prev => ({ ...prev, coverConfig: config }));
+	      setShowGradientPicker(false);
+	   };
 
-   if (loading) return <div className="p-8">Carregando...</div>;
+   const notificationOptions: Array<{
+      key: keyof NotificationPreferences;
+      label: string;
+      cadence: string;
+   }> = [
+      {
+         key: 'notify_due_tasks',
+         label: 'Tarefas a vencer',
+         cadence: 'Diariamente pela manhã'
+      },
+      {
+         key: 'notify_overdue_tasks',
+         label: 'Tarefas atrasadas',
+         cadence: 'Diariamente pela manhã'
+      },
+      {
+         key: 'notify_chapter_events',
+         label: 'Eventos do meu capítulo',
+         cadence: 'Diariamente'
+      },
+      {
+         key: 'notify_new_assignments',
+         label: 'Novas tarefas atribuídas',
+         cadence: 'Recebe na hora'
+      }
+   ];
+
+	   if (loading) return <div className="p-8">Carregando...</div>;
    if (!selectedUser && users.length > 0) return <div className="p-8">Usuário não encontrado.</div>;
    if (!selectedUser) return <div className="p-8">Carregando dados...</div>;
 
@@ -842,37 +1032,81 @@ export const Settings = () => {
                      </div>
                   </div>
 
-                  {/* Notificações */}
-                  <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                     <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-                        <Bell className="w-5 h-5 text-yellow-500" />
-                        Notificações
-                     </h3>
-                     <div className="flex items-center justify-between">
-                        <div className="text-sm text-gray-600">
-                           Receba alertas sobre tarefas e novidades.
-                        </div>
-                        <button
-                           type="button"
-                           onClick={async () => {
-                              if (!selectedUserId) return;
-                              try {
-                                 const token = await requestNotificationPermission(selectedUserId);
-                                 if (token) {
-                                    setPermissionStatus('granted');
-                                    alert('Notificações ativadas com sucesso!');
-                                 }
-                              } catch (e) {
-                                 console.error(e);
-                                 alert('Erro ao ativar notificações.');
-                              }
-                           }}
-                           className="px-4 py-2 bg-yellow-50 text-yellow-700 hover:bg-yellow-100 border border-yellow-200 rounded-lg text-sm font-medium transition-colors"
-                        >
-                           {permissionStatus === 'granted' ? 'Re-sincronizar' : 'Ativar Notificações'}
-                        </button>
+	                  {/* Notificações */}
+	                  <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+                     <div className="flex items-center justify-between gap-3 mb-4">
+                        <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                           <Bell className="w-5 h-5 text-yellow-500" />
+                           Notificações
+                        </h3>
+                        <span className={`text-[11px] font-bold px-2 py-1 rounded-full border ${notificationTokenActive
+                           ? 'bg-green-50 text-green-700 border-green-100'
+                           : 'bg-gray-50 text-gray-500 border-gray-200'
+                           }`}>
+                           {notificationTokenActive ? 'Ativo neste dispositivo' : 'Inativo'}
+                        </span>
                      </div>
-                  </div>
+
+	                     <div className="space-y-3">
+	                        {notificationOptions.map((option) => {
+	                           const isEnabled = notificationPreferences[option.key];
+	                           const isDisabled = !isEditingOwnProfile || notificationSettingsLoading || notificationSettingsSaving;
+
+	                           return (
+	                              <div
+	                                 key={option.key}
+	                                 className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 p-3 rounded-xl border transition-colors ${isEditingOwnProfile
+	                                    ? 'border-gray-100 bg-gray-50 hover:bg-white'
+	                                    : 'border-gray-100 bg-gray-50 opacity-60'
+	                                    }`}
+	                              >
+	                                 <div className="min-w-0 pr-2">
+	                                    <span className="block text-sm font-semibold text-gray-800">{option.label}</span>
+	                                    <span className="block text-xs text-gray-500">{option.cadence}</span>
+	                                 </div>
+	                                 <div className="flex shrink-0 items-center gap-2">
+	                                    <span className={`w-7 text-right text-[10px] font-bold ${isEnabled ? 'text-yellow-700' : 'text-gray-400'}`}>
+	                                       {isEnabled ? 'ON' : 'OFF'}
+	                                    </span>
+	                                    <label className={`relative inline-flex h-7 w-12 shrink-0 items-center ${isDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
+	                                       <input
+	                                          type="checkbox"
+	                                          role="switch"
+	                                          checked={isEnabled}
+	                                          disabled={isDisabled}
+	                                          onChange={(event) => handleNotificationPreferenceChange(option.key, event.target.checked)}
+	                                          className="peer sr-only"
+	                                       />
+	                                       <span className="h-7 w-12 rounded-full border border-gray-300 bg-gray-200 transition-colors peer-checked:border-yellow-500 peer-checked:bg-yellow-500 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-yellow-200" />
+	                                       <span className="absolute left-1 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5" />
+	                                    </label>
+	                                 </div>
+	                              </div>
+	                           );
+	                        })}
+	                     </div>
+
+                     <button
+                        type="button"
+                        onClick={handleEnableNotifications}
+                        disabled={!isEditingOwnProfile || notificationSettingsLoading || notificationSettingsSaving}
+                        className="w-full mt-4 px-4 py-2 bg-yellow-50 text-yellow-700 hover:bg-yellow-100 border border-yellow-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                     >
+                        {(notificationSettingsLoading || notificationSettingsSaving) && <Loader2 className="w-4 h-4 animate-spin" />}
+                        {permissionStatus === 'granted' && notificationTokenActive ? 'Re-sincronizar este dispositivo' : 'Ativar neste dispositivo'}
+                     </button>
+
+	                     {!isEditingOwnProfile && (
+                        <p className="mt-3 text-xs text-gray-500">
+                           As notificações deste dispositivo só podem ser ativadas no seu próprio perfil.
+                        </p>
+	                     )}
+	                     {notificationError && (
+                        <p className="mt-3 text-xs font-medium text-red-600">
+                           {notificationError}
+                        </p>
+	                     )}
+	                  </div>
 
                </div>
             </div>
@@ -883,11 +1117,11 @@ export const Settings = () => {
                )}
                <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || privateFieldsLoading || !privateFieldsLoaded}
                   className="px-8 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 transition-all transform hover:-translate-y-0.5 active:scale-95 flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
                >
-                  {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-                  Salvar Alterações
+                  {(loading || privateFieldsLoading) ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                  {privateFieldsLoading ? 'Carregando dados...' : 'Salvar Alterações'}
                </button>
             </div>
          </form>

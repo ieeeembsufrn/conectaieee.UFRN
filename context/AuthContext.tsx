@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
 import { Profile } from '../types';
+import { disableCurrentNotificationToken } from '../lib/notificationTokens';
 
 interface AuthContextType {
     session: Session | null;
@@ -16,6 +17,24 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const PASSWORD_RECOVERY_FLAG = 'passwordRecoveryInProgress';
+const AUTH_PROFILE_SELECT = `
+    id,
+    auth_id,
+    full_name,
+    email,
+    role,
+    avatar_initials,
+    matricula,
+    skills,
+    photo_url,
+    bio,
+    membership_number,
+    cover_config,
+    social_links,
+    ieee_membership_date,
+    course,
+    profile_chapters(permission_slug, chapter_id, role)
+`;
 
 const isPasswordRecoveryUrl = () => {
     const locationText = `${window.location.href} ${window.location.hash} ${window.location.search}`;
@@ -84,7 +103,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             const { data, error } = await supabase
                 .from('profiles')
-                .select('*, profile_chapters(permission_slug, chapter_id, role)')
+                .select(AUTH_PROFILE_SELECT)
                 .eq('auth_id', authId)
                 .single();
 
@@ -114,6 +133,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const signOut = async () => {
+        if (profile?.id) {
+            try {
+                await disableCurrentNotificationToken(profile.id);
+            } catch (error) {
+                console.error('Erro ao desativar token de notificação no logout:', error);
+            }
+        }
+
         await supabase.auth.signOut();
         setProfile(null);
         setUser(null);

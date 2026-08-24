@@ -47,19 +47,14 @@ export interface Profile {
   role?: string;
   avatar_initials?: string;
   matricula?: string;
-  birth_date?: string;
   skills?: string[];
   photo_url?: string;
   bio?: string;
   membership_number?: string;
   cover_config?: string;
   social_links?: any;
-  phone?: string;
-  cpf?: string[];
   ieee_membership_date?: string; // Mês/Ano
   course?: string;
-  notes?: string;
-  fcm_token?: string;
   // Hydrated
   chapters?: Chapter[];
   profileChapters?: ProfileChapter[]; // Join table details
@@ -70,7 +65,6 @@ export interface Profile {
   chapterRoles?: Record<number, string>;
   chapterIds?: number[];
   capituloId?: number;
-  dataNascimento?: string;
   habilidades?: string[];
   foto?: string;
   nroMembresia?: string;

@@ -9,6 +9,23 @@ import {
 } from '../types';
 import { useAuth } from './AuthContext';
 
+const PUBLIC_PROFILE_SELECT = `
+  id,
+  full_name,
+  email,
+  role,
+  avatar_initials,
+  matricula,
+  skills,
+  photo_url,
+  bio,
+  membership_number,
+  cover_config,
+  social_links,
+  ieee_membership_date,
+  course
+`;
+
 interface DataContextType {
   tasks: Task[];
   projects: Project[];
@@ -52,7 +69,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         profCapsRes, projMemsRes, projCapsRes, taskAssignsRes
       ] = await Promise.all([
         supabase.from('chapters').select('*').order('id', { ascending: true }),
-        supabase.from('profiles').select('*'),
+        supabase.from('profiles').select(PUBLIC_PROFILE_SELECT),
         supabase.from('projects').select('*'),
         supabase.from('tasks').select('*'),
         supabase.from('events').select('*').order('start_date', { ascending: true }),
@@ -121,19 +138,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role: u.role,
           avatar_initials: u.avatar_initials,
           matricula: u.matricula || 'N/D',
-          birth_date: u.birth_date,
           skills: u.skills || [],
           photo_url: u.photo_url,
           bio: u.bio,
           membership_number: u.membership_number,
           cover_config: u.cover_config,
           social_links: u.social_links || { linkedin: '', github: '', instagram: '' },
-          // New Fields
-          cpf: u.cpf || [], // Ensure array
-          phone: u.phone,
           ieee_membership_date: u.ieee_membership_date,
           course: u.course,
-          fcm_token: u.fcm_token,
           // Hydrated
           chapters: userChapters,
           profileChapters: userChapRels,
@@ -143,7 +155,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           chapterRoles: userChapRels.reduce((acc: any, curr) => ({ ...acc, [curr.chapter_id]: curr.role }), {}),
           chapterIds: userChapters.map(c => c.id),
           capituloId: userChapters.length > 0 ? userChapters[0].id : null,
-          dataNascimento: u.birth_date,
           habilidades: u.skills || [],
           foto: u.photo_url || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(u.full_name)}&backgroundColor=00a3ef`,
           nroMembresia: u.membership_number,

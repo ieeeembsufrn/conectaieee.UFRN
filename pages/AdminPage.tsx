@@ -2,7 +2,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Briefcase, Users, Globe, ShieldCheck, ChevronRight, FileText, DollarSign } from 'lucide-react';
+import { BellRing, Briefcase, Users, Globe, ShieldCheck, ChevronRight, FileText, DollarSign } from 'lucide-react';
 
 export const AdminPage = () => {
   const navigate = useNavigate();
@@ -58,17 +58,27 @@ export const AdminPage = () => {
       path: '/admin/vtools-report',
       allowed: isAdmin || isChair || isManager
     },
-    {
-      id: 'financeiro',
-      title: 'Financeiro',
-      description: 'Livro caixa para gestão de entradas e saídas. Acompanhe o saldo do capítulo.',
-      icon: DollarSign,
+	    {
+	      id: 'financeiro',
+	      title: 'Financeiro',
+	      description: 'Livro caixa para gestão de entradas e saídas. Acompanhe o saldo do capítulo.',
+	      icon: DollarSign,
       color: 'bg-green-600',
       lightColor: 'bg-green-50 text-green-600',
-      path: '/admin/financial',
-      allowed: isAdmin || isChair || isManager
-    }
-  ];
+	      path: '/admin/financial',
+	      allowed: isAdmin || isChair || isManager
+	    },
+	    {
+	      id: 'avisaieee',
+	      title: 'AvisaIEEE',
+	      description: 'Envie comunicados push para membros, capítulos e grupos com notificações ativas.',
+	      icon: BellRing,
+	      color: 'bg-amber-500',
+	      lightColor: 'bg-amber-50 text-amber-600',
+	      path: '/admin/avisaieee',
+	      allowed: isAdmin
+	    }
+	  ];
 
   const modules = allModules.filter(m => m.allowed);
 

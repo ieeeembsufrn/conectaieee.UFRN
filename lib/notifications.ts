@@ -1,57 +1,28 @@
-import { getToken, onMessage } from 'firebase/messaging';
-import { messaging } from './firebase';
-import { supabase } from './supabase';
+import { onMessage } from 'firebase/messaging';
+import { getFirebaseMessaging } from './firebase';
+import {
+    DEFAULT_NOTIFICATION_PREFERENCES,
+    NotificationPreferences,
+    requestAndSaveNotificationToken
+} from './notificationTokens';
 
-export const requestNotificationPermission = async (userId: string | number) => {
+export const requestNotificationPermission = async (
+    userId: string | number,
+    preferences: NotificationPreferences = DEFAULT_NOTIFICATION_PREFERENCES
+) => {
     try {
         if (typeof Notification === 'undefined') {
             console.warn('Notifications not supported in this browser.');
             return null;
         }
-        const permission = await Notification.requestPermission();
 
-        if (permission === 'granted') {
-            // Get the token
-            // VAPID Key is public. Ideally should be in env or constants.
-            // Using a placeholder or assuming the user will replace it.
-            // If the user hasn't provided one, we can try to proceed without it (sometimes works if default is set) 
-            // or use a clear placeholder.
-            // Get the registration from the PWA service worker with a timeout
-            const registration = await Promise.race([
-                navigator.serviceWorker.ready,
-                new Promise<ServiceWorkerRegistration>((_, reject) =>
-                    setTimeout(() => reject(new Error('Service Worker registration timed out')), 5000)
-                )
-            ]);
-
-            const currentToken = await getToken(messaging, {
-                vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY,
-                serviceWorkerRegistration: registration
-            });
-
-            if (currentToken) {
-                console.log('FCM Token:', currentToken);
-
-                // Save to Supabase
-                const { error } = await supabase
-                    .from('profiles')
-                    .update({ fcm_token: currentToken })
-                    .eq('id', userId);
-
-                if (error) {
-                    console.error('Error saving FCM token to Supabase:', error);
-                    throw error;
-                }
-
-                return currentToken;
-            } else {
-                console.warn('No registration token available. Request permission to generate one.');
-                return null;
-            }
-        } else {
-            console.warn('Notification permission denied.');
+        const tokenRecord = await requestAndSaveNotificationToken(Number(userId), preferences);
+        if (!tokenRecord) {
+            console.warn('No registration token available. Request permission to generate one.');
             return null;
         }
+
+        return tokenRecord.token;
     } catch (error) {
         console.error('An error occurred while retrieving token:', error);
         throw error;
@@ -59,9 +30,21 @@ export const requestNotificationPermission = async (userId: string | number) => 
 };
 
 export const setupOnMessage = (callback: (payload: any) => void) => {
-    return onMessage(messaging, (payload) => {
-        callback(payload);
+    let isActive = true;
+    let unsubscribe: (() => void) | null = null;
+
+    getFirebaseMessaging().then((messaging) => {
+        if (!isActive || !messaging) return;
+
+        unsubscribe = onMessage(messaging, (payload) => {
+            callback(payload);
+        });
+    }).catch((error) => {
+        console.error('Erro ao configurar listener de notificações:', error);
     });
+
+    return () => {
+        isActive = false;
+        unsubscribe?.();
+    };
 };
-
-
