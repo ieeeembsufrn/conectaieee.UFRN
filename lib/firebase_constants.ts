@@ -1,9 +1,9 @@
 export const firebaseConfig = {
-    apiKey: "AIzaSyCwOIy_dxcQhWSwguYHbxVOzcM8Hh8XbKw",
-    authDomain: "conectaieee.firebaseapp.com",
-    projectId: "conectaieee",
-    storageBucket: "conectaieee.firebasestorage.app",
-    messagingSenderId: "1095249573464",
-    appId: "1:1095249573464:web:ec2869232485f2362e7c2d",
-    measurementId: "G-DMQGRT3Y8N"
+    apiKey: "AIzaSyA70velkmDdr4N40CKKWCTV9haxyt_HoXs",
+    authDomain: "conectaieee---ieee-embs-ufrn.firebaseapp.com",
+    projectId: "conectaieee---ieee-embs-ufrn",
+    storageBucket: "conectaieee---ieee-embs-ufrn.firebasestorage.app",
+    messagingSenderId: "78055062756",
+    appId: "1:78055062756:web:fd15f227ef695f8dcb00f1",
+    measurementId: "G-JS47L813JK"
 };
