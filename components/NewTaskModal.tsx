@@ -1,12 +1,13 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Check, FolderKanban, Briefcase, Plus, Loader2, Save, Activity, Tag, ChevronDown, Flag } from 'lucide-react';
+import { X, Check, FolderKanban, Briefcase, Plus, Loader2, Save, Activity, Tag, ChevronDown, Flag, Trash2 } from 'lucide-react';
 import { UserAvatar, getLocalDateISOString } from '../lib/utils';
 import { supabase } from '../lib/supabase';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { hasExternalPermission } from '../lib/access';
 import { nanoid } from 'nanoid';
+import { ConfirmationModal } from './ConfirmationModal';
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -50,6 +51,8 @@ export const NewTaskModal = ({ isOpen, onClose, projeto = null, taskToEdit = nul
 
   const [tagInput, setTagInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Search & Dropdown States
   const [searchQuery, setSearchQuery] = useState('');
@@ -181,6 +184,35 @@ export const NewTaskModal = ({ isOpen, onClose, projeto = null, taskToEdit = nul
     }
   };
 
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setShowDeleteConfirm(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!taskToEdit?.id) return;
+
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', taskToEdit.id);
+
+      if (error) throw error;
+
+      await fetchData(true);
+      onClose();
+    } catch (e: any) {
+      console.error("Error deleting task:", e);
+      alert(`Erro ao deletar tarefa: ${e.message || 'Erro desconhecido'}`);
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   // --- Handlers para Chips de Tags ---
   const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' || e.key === ',') {
@@ -255,7 +287,18 @@ export const NewTaskModal = ({ isOpen, onClose, projeto = null, taskToEdit = nul
   };
 
   return (
-    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 transition-opacity">
+    <>
+      <ConfirmationModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleConfirmDelete}
+        title="Deletar Tarefa"
+        message="Tem certeza que deseja deletar esta tarefa? Se ela tiver subtarefas, elas também serão deletadas. Esta ação não pode ser desfeita."
+        type="danger"
+        confirmLabel="Sim, deletar"
+      />
+
+      <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 transition-opacity">
       <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-gray-100">
         <div className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-gray-100 px-6 py-4 flex items-center justify-between z-20">
           <div>
@@ -577,29 +620,46 @@ export const NewTaskModal = ({ isOpen, onClose, projeto = null, taskToEdit = nul
             </div>
           )}
 
-          <div className="pt-2 flex items-center justify-end gap-3 border-t border-gray-100 mt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-6 py-2.5 text-gray-700 font-medium hover:bg-gray-100 rounded-xl transition-colors text-sm"
-            >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all transform hover:-translate-y-0.5 active:scale-95 flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSubmitting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                taskToEdit ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />
-              )}
-              {isSubmitting ? 'Salvando...' : (taskToEdit ? 'Atualizar Tarefa' : 'Criar Tarefa')}
-            </button>
+          <div className="pt-2 flex items-center justify-between gap-3 border-t border-gray-100 mt-2">
+            {taskToEdit ? (
+              <button
+                type="button"
+                onClick={handleDeleteClick}
+                disabled={isDeleting || isSubmitting}
+                className="px-4 py-2.5 text-red-600 font-medium hover:bg-red-50 rounded-xl transition-colors text-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                Deletar
+              </button>
+            ) : (
+              <div />
+            )}
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-6 py-2.5 text-gray-700 font-medium hover:bg-gray-100 rounded-xl transition-colors text-sm"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting || isDeleting}
+                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 transition-all transform hover:-translate-y-0.5 active:scale-95 flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  taskToEdit ? <Save className="w-4 h-4" /> : <Plus className="w-4 h-4" />
+                )}
+                {isSubmitting ? 'Salvando...' : (taskToEdit ? 'Atualizar Tarefa' : 'Criar Tarefa')}
+              </button>
+            </div>
           </div>
         </form>
       </div>
     </div>
+    </>
   );
 };
